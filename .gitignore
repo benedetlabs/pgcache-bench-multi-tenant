@@ -1,0 +1,4 @@
+# Run output — regenerate by running the sweeps.
+data/run-*.txt
+*.log
+.DS_Store

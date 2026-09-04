@@ -1,0 +1,88 @@
+# ── PgCache: path B ─────────────────────────────────────────────────────────
+#
+# Worth knowing before reading the config: the image embeds its own PostgreSQL,
+# and that is where cached entries live. A cache HIT is a full SQL round trip to
+# that local database, not a memory read. That single fact drives most of the
+# results -- it gives PgCache a cost floor, and the gain is whatever work the
+# origin's query costs above it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgcache
+  namespace: pgcache-mt
+spec:
+  clusterIP: None          # see the note in 01-origin.yaml
+  selector: {app: pgcache}
+  ports:
+    - {port: 6432, targetPort: 6432, name: sql}
+    - {port: 9090, targetPort: 9090, name: metrics}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgcache
+  namespace: pgcache-mt
+spec:
+  replicas: 1
+  # Recreate, never RollingUpdate. With one pod per node enforced by
+  # anti-affinity, a rolling update tries to surge a second pod onto a node that
+  # does not exist, and the rollout deadlocks until it is deleted by hand.
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: pgcache}}
+  template:
+    metadata:
+      labels: {app: pgcache, lab/role: pgcache}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - {key: lab/role, operator: NotIn, values: [pgcache]}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: pgcache
+          image: pgcache/pgcache:latest
+          env:
+            - name: UPSTREAM_URL
+              value: postgres://bench:benchpass@origin.pgcache-mt.svc.cluster.local:5432/bench
+            - {name: LISTEN_PORT,  value: "6432"}
+            - {name: METRICS_PORT, value: "9090"}
+            - {name: NUM_WORKERS,  value: "4"}
+
+            # ── THE ONE SETTING THAT SILENTLY RUINS A RUN ──────────────────
+            #
+            # PgCache only caches tables listed here. Get it wrong and every
+            # query is a miss, the cache looks useless, and nothing errors.
+            #
+            # We lost a full ten-cell probe to exactly that: `helm --set` splits
+            # unescaped commas into separate assignments, so a table list passed
+            # on the command line was discarded whole. Every shape reported a
+            # 0.0% hit ratio -- including a plain primary-key lookup -- and the
+            # cache was working perfectly. It had simply been given no tables.
+            #
+            # Whatever tool you use, VERIFY the value reached the container:
+            #   kubectl -n pgcache-mt exec deploy/pgcache -- printenv ALLOWED_TABLES
+            - name: ALLOWED_TABLES
+              value: "product,category,seller,customer,orders,order_item,review"
+
+            # Anonymous telemetry is uncontrolled network traffic inside a
+            # measurement window. Off.
+            - {name: PGCACHE_TELEMETRY, value: "off"}
+
+            # Left unset on purpose, so the campaign measures the product's
+            # defaults rather than our tuning:
+            #   PINNED_TABLES        pre-load and keep tables updated in place
+            #   ADMISSION_THRESHOLD  occurrences before an entry is admitted
+            #   MEMORY_LIMIT         defaults to 80% of DETECTED RAM. If you add
+            #                        resources.limits.memory below, you MUST set
+            #                        this under that limit -- inside a cgroup
+            #                        PgCache tends to see the node's full RAM and
+            #                        the kubelet will OOM-kill it.
+          ports:
+            - {containerPort: 6432, name: sql}
+            - {containerPort: 9090, name: metrics}
+          resources:
+            requests: {cpu: "6", memory: 24Gi}

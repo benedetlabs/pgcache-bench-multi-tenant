@@ -1,0 +1,122 @@
+# ── The origin: plain PostgreSQL, path A ────────────────────────────────────
+#
+# Every server flag below is part of the measurement. Changing one changes what
+# the numbers mean, so each is explained.
+apiVersion: v1
+kind: Service
+metadata:
+  name: origin
+  namespace: pgcache-mt
+spec:
+  # Headless. Under hostNetwork the pod IP IS the node IP, so DNS resolves
+  # straight to the node and the connection skips kube-proxy, NAT and the
+  # overlay. At ~1,000 requests per second with eight statements each, the
+  # per-packet cost of an overlay is a measurable fraction of the result --
+  # mixing it in would mean measuring Kubernetes rather than the cache.
+  #
+  # If your cluster forbids hostNetwork (Pod Security admission often does),
+  # delete `clusterIP: None` here and in 02-pgcache.yaml, and delete the
+  # hostNetwork/dnsPolicy lines from both pod specs. Everything still works;
+  # both paths pay the overlay cost equally, so the COMPARISON stays fair. The
+  # absolute latencies will be higher than the ones published in the article.
+  clusterIP: None
+  selector: {app: origin}
+  ports: [{port: 5432, targetPort: 5432, name: postgres}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: origin
+  namespace: pgcache-mt
+spec:
+  serviceName: origin
+  replicas: 1
+  selector: {matchLabels: {app: origin}}
+  template:
+    metadata:
+      labels: {app: origin, lab/role: origin}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # ONE POD PER NODE. Path B runs the origin AND PgCache; path A runs only
+      # the origin. Sharing a node would give path B less CPU for the origin
+      # than path A had, at exactly the concurrency where the comparison is
+      # decided -- the result would be an artifact of co-location.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - {key: lab/role, operator: NotIn, values: [origin]}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: postgres
+          image: postgres:17
+          args:
+            - postgres
+            # PgCache follows the replication stream to know what to
+            # invalidate. Without logical decoding it has no change feed and
+            # cannot be coherent at all.
+            - -c
+            - wal_level=logical
+            - -c
+            - max_wal_senders=10
+            - -c
+            - max_replication_slots=10
+            # Lets you inspect what the workload actually issued, per statement.
+            - -c
+            - shared_preload_libraries=pg_stat_statements
+            - -c
+            - pg_stat_statements.track=all
+            # THE MOST IMPORTANT FLAG HERE. Fixed at 1 GB across every campaign
+            # so results compare. The dataset is ~463 MB, so it fits entirely --
+            # the origin never touches disk. That is deliberate and it is the
+            # HARDEST case for a cache: it cannot win on avoided I/O and has to
+            # win on work saved.
+            - -c
+            - shared_buffers=1GB
+            # The concurrency sweep reaches 32 clients on each path, and each
+            # pgbench client holds a connection. Headroom, not tuning.
+            - -c
+            - max_connections=500
+            - -c
+            - work_mem=32MB
+            - -c
+            - maintenance_work_mem=512MB
+            # SSD-backed storage. The default of 4.0 assumes spinning disks and
+            # would push the planner toward sequential scans it should not
+            # choose here.
+            - -c
+            - random_page_cost=1.1
+            # Makes blks_read vs blks_hit readable, so "is the origin serving
+            # from memory?" is a measurement rather than an assumption.
+            - -c
+            - track_io_timing=on
+          env:
+            - {name: POSTGRES_USER, value: bench}
+            - {name: POSTGRES_DB, value: bench}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: lab-db, key: POSTGRES_PASSWORD}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432, name: postgres}]
+          # REQUESTS ONLY, NO LIMITS -- and this is not an oversight.
+          #
+          # A CPU limit becomes a CFS quota enforced over 100 ms windows. A pod
+          # that exceeds it is frozen until the window turns, and that freeze
+          # appears as a p99 spike indistinguishable from a cache miss, which is
+          # exactly the signal being read. With one pod per node the isolation
+          # comes from the node and no quota is needed.
+          resources:
+            requests: {cpu: "6", memory: 20Gi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, bench, -d, bench]}
+            periodSeconds: 5
+            failureThreshold: 30
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 64Gi}}
+        # storageClassName: managed-csi   # set to your cluster's SSD class

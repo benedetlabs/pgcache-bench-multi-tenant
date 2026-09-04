@@ -1,0 +1,29 @@
+# ── A pod that can read PgCache's metrics ───────────────────────────────────
+#
+# scripts/lib.sh scrapes the hit/miss counters over HTTP. It cannot do that from
+# the loadgen pod: the postgres:17 image ships neither curl nor wget.
+#
+# This one-container Deployment exists purely to be exec'd into for that scrape.
+# It is NOT pinned away from the lab nodes by anti-affinity because it is idle
+# between scrapes and uses almost nothing -- but if your cluster has a system
+# node pool, pin it there with a nodeSelector so it cannot compete with the
+# components being measured.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-reader
+  namespace: pgcache-mt
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: metrics-reader}}
+  template:
+    metadata:
+      labels: {app: metrics-reader}
+    spec:
+      # nodeSelector: {your-system-pool-label: "true"}
+      containers:
+        - name: shell
+          image: alpine:3.20
+          command: [sh, -c, "exec sleep infinity"]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}

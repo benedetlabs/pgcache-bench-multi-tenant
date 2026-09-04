@@ -1,0 +1,78 @@
+# ── Running this on a laptop instead of a cluster ───────────────────────────
+#
+# Everything works and the SHAPE of the results reproduces. The MAGNITUDES do
+# not, and it is worth knowing why before comparing against the published table.
+#
+# On Kubernetes the three components sit on three separate machines, so every
+# query crosses a real network hop. In Docker they share one host and one kernel:
+# the hop is nearly free, and the three of them compete for the same CPUs. We
+# measured this directly on an earlier campaign -- the same query cost 77 us on a
+# laptop and 167 us across nodes on the cluster.
+#
+# So: use this to develop the workload, to check the SQL, and to see the effect
+# exists. Use a cluster to produce numbers.
+#
+#   docker compose up -d
+#   NS= docker compose exec client bash      # then run the sql/ files by hand
+name: pgcache-multi-tenant
+
+services:
+  origin:
+    image: postgres:17
+    command: >
+      postgres -c wal_level=logical -c max_wal_senders=10
+               -c max_replication_slots=10
+               -c shared_preload_libraries=pg_stat_statements
+               -c pg_stat_statements.track=all
+               -c shared_buffers=1GB -c max_connections=500
+               -c work_mem=32MB -c maintenance_work_mem=512MB
+               -c random_page_cost=1.1 -c track_io_timing=on
+    environment:
+      POSTGRES_DB: bench
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: benchpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d bench"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    volumes: [origin-data:/var/lib/postgresql/data]
+    ports: ["55432:5432"]
+
+  pgcache:
+    image: pgcache/pgcache:latest
+    depends_on:
+      origin: {condition: service_healthy}
+    environment:
+      UPSTREAM_URL: postgres://bench:benchpass@origin:5432/bench
+      LISTEN_PORT: "6432"
+      METRICS_PORT: "9090"
+      NUM_WORKERS: "4"
+      # Same warning as the Kubernetes manifest: get this list wrong and every
+      # query misses, with no error anywhere.
+      ALLOWED_TABLES: "product,category,seller,customer,orders,order_item,review"
+      PGCACHE_TELEMETRY: "off"
+    ports: ["56432:6432", "59090:9090"]
+
+  # The client runs INSIDE the compose network, never from the host. A
+  # host-to-container hop on Docker Desktop for macOS costs more than the entire
+  # effect being measured.
+  client:
+    image: postgres:17
+    depends_on:
+      origin: {condition: service_healthy}
+    environment:
+      ORIGIN_HOST: origin
+      ORIGIN_PORT: "5432"
+      PGCACHE_HOST: pgcache
+      PGCACHE_PORT: "6432"
+      PGUSER: bench
+      PGDATABASE: bench
+      PGPASSWORD: benchpass
+    volumes:
+      - ../sql:/sql:ro
+      - ../workload:/tmp/mt:ro
+    entrypoint: ["sleep", "infinity"]
+
+volumes:
+  origin-data:

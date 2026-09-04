@@ -1,0 +1,72 @@
+# ── The load generator ──────────────────────────────────────────────────────
+#
+# The image is postgres:17 because pgbench ships inside it. An earlier lab used
+# a language runtime image and apt-get'd the Postgres client at pod startup; a
+# campaign died with `exit 127` when that had not finished. There is nothing to
+# install here.
+#
+# Deployment rather than a bare Pod: on a spot node a bare Pod is not recreated
+# after eviction, and a campaign's results die with it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loadgen-results
+  namespace: pgcache-mt
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 20Gi}}
+  # storageClassName: managed-csi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: pgcache-mt
+spec:
+  replicas: 1
+  strategy: {type: Recreate}      # RWO volume: the old pod must release it first
+  selector: {matchLabels: {app: loadgen}}
+  template:
+    metadata:
+      labels: {app: loadgen, lab/role: loadgen}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - {key: lab/role, operator: NotIn, values: [loadgen]}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: bench
+          image: postgres:17
+          command: [/bin/bash, -c, "pgbench --version && psql --version && exec sleep infinity"]
+          readinessProbe:
+            exec: {command: [/bin/bash, -c, "command -v pgbench && command -v psql"]}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          workingDir: /lab
+          # The scripts read these. Both paths are addressed here and nowhere
+          # else, which is what keeps "the only difference is host and port"
+          # true by construction.
+          env:
+            - {name: ORIGIN_HOST,  value: "origin.pgcache-mt.svc.cluster.local"}
+            - {name: ORIGIN_PORT,  value: "5432"}
+            - {name: PGCACHE_HOST, value: "pgcache.pgcache-mt.svc.cluster.local"}
+            - {name: PGCACHE_PORT, value: "6432"}
+            - {name: PGUSER,       value: "bench"}
+            - {name: PGDATABASE,   value: "bench"}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: lab-db, key: POSTGRES_PASSWORD}}
+          # pgbench itself becomes the bottleneck if it is starved, and a
+          # starved generator makes BOTH paths look equally slow -- which reads
+          # as "no difference" rather than as a broken measurement.
+          resources:
+            requests: {cpu: "6", memory: 8Gi}
+          volumeMounts:
+            - {name: lab, mountPath: /lab}
+      volumes:
+        - name: lab
+          persistentVolumeClaim: {claimName: loadgen-results}
