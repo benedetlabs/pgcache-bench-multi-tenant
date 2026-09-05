@@ -27,7 +27,7 @@ ALTER TABLE orders     ADD COLUMN IF NOT EXISTS tenant_id int;
 ALTER TABLE order_item ADD COLUMN IF NOT EXISTS tenant_id int;
 
 UPDATE orders
-   SET tenant_id = 1 + ((customer_id - 1) % 200)
+   SET tenant_id = 1 + (customer_id % 200)
  WHERE tenant_id IS NULL;
 
 UPDATE order_item oi
