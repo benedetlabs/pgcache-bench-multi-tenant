@@ -2,56 +2,58 @@
 
 > 🇧🇷 **[Versão em português](README-pt.md)**
 
-Verification run for **PgCache v0.7.0** (`pgcache/pgcache:0.7.0-arm64` / `pgcache/pgcache:0.7.0`) executed in local Docker environment following the benchmark protocol.
+Verification run for **PgCache v0.7.0** (`pgcache/pgcache:0.7.0-arm64` / `pgcache/pgcache:0.7.0`) executed in local Docker environment across 1,000 tenants following the benchmark protocol.
 
 ## 1. Summary
 
-- **Hit Ratio**: **100.0%** across all tenant counts, concurrency levels, and write ratios.
-- **Single-Client Baseline**: **5.20× faster** (4.00 ms vs 20.78 ms) with zero queuing.
-- **Max Saturation Gain**: **+896%** at 16 clients (15.30 ms vs 152.81 ms) and **+869%** at 32 clients (30.85 ms vs 300.46 ms, 1,037 rps).
-- **Write Resilience**: Maintained **+83% to +401% throughput gain** under concurrent writes. In local single-host Docker environments, concurrent CDC invalidation introduces higher local CPU competition than earlier versions, which will benefit from isolated 3-node Kubernetes placement.
+- **Hit Ratio**: **100.0%** across tenants 1..500 and **99.7%** at 1,000 tenants (first sign of key-space explosion / cold-set eviction).
+- **Single-Client Baseline**: **2.06× faster** (5.55 ms vs 11.45 ms) with zero queuing.
+- **Max Saturation Gain**: **+145%** at 8 clients (14.90 ms vs 36.48 ms, 537 rps) and **+111% to +126%** at 16–32 clients.
+- **Write Resilience**: Maintained **+24% to +69% throughput gain** under concurrent writes across 1,000 tenants. In local single-host Docker environments, concurrent CDC invalidation introduces higher local CPU competition than earlier versions, which will benefit from isolated 3-node Kubernetes placement.
 
 ---
 
 ## 2. Sweep 1 — Tenant Count Sweep
 
-Evaluating query space expansion across 1, 10, 50, and 200 active tenants (concurrency fixed at 8 clients):
+Evaluating query space expansion across 1, 10, 50, 200, 500, and 1,000 active tenants (concurrency fixed at 8 clients):
 
 | Active Tenants | Origin (Path A) | PgCache (Path B) | Gain | Hit Ratio | Warm Passes |
 |---:|---|---|---:|---:|---:|
-| 1 | 85.6 ms · 93 rps | 9.23 ms · 867 rps | +832% | 100.0% | 2 |
-| 10 | 87.3 ms · 92 rps | 8.83 ms · 906 rps | +885% | 100.0% | 2 |
-| 50 | 81.6 ms · 98 rps | 9.29 ms · 861 rps | +779% | 100.0% | 3 |
-| 200 | 93.7 ms · 85 rps | 10.00 ms · 800 rps | +841% | 100.0% | 4 |
+| 1 | 46.1 ms · 174 rps | 13.98 ms · 572 rps | +229% | 100.0% | 3 |
+| 10 | 33.5 ms · 239 rps | 14.12 ms · 567 rps | +137% | 100.0% | 2 |
+| 50 | 32.5 ms · 246 rps | 15.13 ms · 529 rps | +115% | 100.0% | 3 |
+| 200 | 37.0 ms · 216 rps | 15.37 ms · 521 rps | +141% | 100.0% | 3 |
+| 500 | 36.5 ms · 219 rps | 16.13 ms · 496 rps | +126% | 100.0% | 4 |
+| 1000 | 36.0 ms · 222 rps | 15.70 ms · 510 rps | +130% | 99.7% | 5 |
 
 ---
 
 ## 3. Sweep 2 — Client Concurrency Sweep
 
-Separating pure read cache speed from origin saturation (200 tenants):
+Separating pure read cache speed from origin saturation (1,000 tenants):
 
 | Clients | Origin (Path A) | PgCache (Path B) | Gain | Hit Ratio | Warm Passes |
 |---:|---|---|---:|---:|---:|
-| 1 | 20.8 ms · 48 rps | 4.00 ms · 250 rps | +421% | 100.0% | 2 |
-| 4 | 46.1 ms · 87 rps | 5.94 ms · 674 rps | +675% | 100.0% | 2 |
-| 8 | 80.8 ms · 99 rps | 8.84 ms · 905 rps | +814% | 100.0% | 2 |
-| 16 | 152.8 ms · 105 rps | 15.30 ms · 1,046 rps | +896% | 100.0% | 2 |
-| 32 | 300.5 ms · 107 rps | 30.85 ms · 1,037 rps | +869% | 100.0% | 2 |
+| 1 | 11.5 ms · 87 rps | 5.55 ms · 180 rps | +107% | 100.0% | 2 |
+| 4 | 19.5 ms · 205 rps | 9.10 ms · 439 rps | +114% | 100.0% | 2 |
+| 8 | 36.5 ms · 219 rps | 14.90 ms · 537 rps | +145% | 100.0% | 2 |
+| 16 | 58.9 ms · 272 rps | 25.97 ms · 616 rps | +126% | 100.0% | 2 |
+| 32 | 107.8 ms · 297 rps | 51.09 ms · 626 rps | +111% | 100.0% | 2 |
 
 ---
 
 ## 4. Sweep 3 — Write Ratio and Concentration Sweep
 
-Testing cache invalidation resilience with mixed reads and writes (8 clients, 200 tenants):
+Testing cache invalidation resilience with mixed reads and writes (8 clients, 1,000 tenants):
 
 | Writes | Write Tenants | Origin (Path A) | PgCache (Path B) | Gain | Hit Ratio | Warm Passes |
 |---:|---:|---|---|---:|---:|---:|
-| 0% | 200 | 83.2 ms · 96 rps | 8.90 ms · 899 rps | +836% | 100.0% | 2 |
-| 5% | 1 | 78.0 ms · 103 rps | 15.49 ms · 516 rps | +401% | 100.0% | 2 |
-| 5% | 10 | 76.3 ms · 105 rps | 33.33 ms · 240 rps | +129% | 100.0% | 2 |
-| 5% | 200 | 80.6 ms · 99 rps | 35.99 ms · 222 rps | +124% | 100.0% | 2 |
-| 10% | 1 | 73.7 ms · 108 rps | 21.53 ms · 372 rps | +244% | 100.0% | 2 |
-| 10% | 200 | 73.8 ms · 108 rps | 40.37 ms · 198 rps | +83% | 100.0% | 2 |
+| 0% | 1000 | 35.6 ms · 225 rps | 14.91 ms · 537 rps | +139% | 100.0% | 2 |
+| 5% | 1 | 32.5 ms · 246 rps | 19.60 ms · 408 rps | +66% | 100.0% | 2 |
+| 5% | 10 | 31.6 ms · 253 rps | 19.43 ms · 412 rps | +63% | 100.0% | 2 |
+| 5% | 1000 | 31.8 ms · 252 rps | 20.96 ms · 382 rps | +52% | 100.0% | 2 |
+| 10% | 1 | 32.1 ms · 249 rps | 18.97 ms · 422 rps | +69% | 100.0% | 2 |
+| 10% | 1000 | 31.2 ms · 257 rps | 25.14 ms · 318 rps | +24% | 100.0% | 2 |
 
 ---
 

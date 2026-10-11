@@ -44,10 +44,16 @@ if [ "$BENCH_ENV" = "docker" ]; then
   CURRENT_ORDERS="${CURRENT_ORDERS//[[:space:]]/}"
   [ -z "$CURRENT_ORDERS" ] && CURRENT_ORDERS=0
 
-  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
-    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders) ---"
+  CURRENT_TENANTS=$(docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
+    psql -h origin -U bench -d bench -tAc \
+    "SELECT count(DISTINCT tenant_id) FROM orders;" 2>/dev/null || echo "0")
+  CURRENT_TENANTS="${CURRENT_TENANTS//[[:space:]]/}"
+  [ -z "$CURRENT_TENANTS" ] && CURRENT_TENANTS=0
+
+  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_TENANTS" -eq "$TENANTS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
+    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders, $CURRENT_TENANTS tenants) ---"
   else
-    echo "--- Seeding database (Current: $CURRENT_ORDERS orders, Target: $EXPECTED_ORDERS) ---"
+    echo "--- Seeding database (Current: $CURRENT_ORDERS orders / $CURRENT_TENANTS tenants, Target: $EXPECTED_ORDERS orders / $TENANTS tenants) ---"
     for f in 01-schema 02-tenant; do
       echo "--- applying $f.sql (scale=$SCALE, tenants=$TENANTS) ---"
       docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
@@ -72,10 +78,16 @@ else
   CURRENT_ORDERS="${CURRENT_ORDERS//[[:space:]]/}"
   [ -z "$CURRENT_ORDERS" ] && CURRENT_ORDERS=0
 
-  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
-    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders) ---"
+  CURRENT_TENANTS=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c \
+    "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
+    \"SELECT count(DISTINCT tenant_id) FROM orders;\"" 2>/dev/null || echo "0")
+  CURRENT_TENANTS="${CURRENT_TENANTS//[[:space:]]/}"
+  [ -z "$CURRENT_TENANTS" ] && CURRENT_TENANTS=0
+
+  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_TENANTS" -eq "$TENANTS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
+    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders, $CURRENT_TENANTS tenants) ---"
   else
-    echo "--- Seeding database in Kubernetes (Current: $CURRENT_ORDERS orders, Target: $EXPECTED_ORDERS) ---"
+    echo "--- Seeding database in Kubernetes (Current: $CURRENT_ORDERS orders / $CURRENT_TENANTS tenants, Target: $EXPECTED_ORDERS orders / $TENANTS tenants) ---"
     for f in 01-schema 02-tenant; do
       echo "--- applying $f.sql (scale=$SCALE, tenants=$TENANTS) ---"
       kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/$f.sql" < "$HERE/../sql/$f.sql"
