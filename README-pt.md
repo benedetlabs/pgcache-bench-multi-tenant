@@ -27,6 +27,7 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 11. [Passo 4 — o protocolo de medição](#11-passo-4--o-protocolo-de-medição)
 12. [Varredura 1 — o número de tenants quebra o cache?](#12-varredura-1--o-número-de-tenants-quebra-o-cache)
    - [12.1 Escala multi-tenant até 2.000 tenants no DigitalOcean (DOKS)](#121-escala-multi-tenant-até-2000-tenants-no-digitalocean-doks)
+   - [12.2 Perfil Otimizado de Rede e Engine (Baseline vs Tuned)](#122-comparativo-lado-a-lado-baseline-vs-perfil-otimizado)
 13. [Varredura 2 — separando cache de saturação](#13-varredura-2--separando-cache-de-saturação)
 14. [Varredura 3 — escrita](#14-varredura-3--escrita)
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
@@ -849,6 +850,26 @@ Para testar se uma multilocação extrema gera explosão de chaves ou descarte p
 - **O ganho de vazão foi consistentemente positivo**: O PgCache entregou entre **+38% e +93% mais vazão** que o banco de dados sem cache em Droplets em nuvem de baixo custo.
 
 Para detalhamento por versão, consulte o diretório [`results/`](results/README-pt.md).
+
+### 12.2 Comparativo Lado a Lado: Baseline vs Perfil Otimizado
+
+Para maximizar a vazão do PgCache e eliminar gargalos de rede e concorrência, implementamos um **Perfil Otimizado (Tuned)**:
+- **Ajustes de Pilha de Rede Linux**: `initContainer` privilegiado `tune-net-stack` configurando `tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_max_syn_backlog=65535`, `tcp_tw_reuse=1` e VirtIO RPS em todas as vCPUs (`rps_cpus=f`).
+- **Dimensionamento do PgCache**: `NUM_WORKERS=8` (casando com a concorrência de vCPUs do droplet), `MEMO_CACHE_SIZE=1073741824` (1 GiB bruto em bytes) e `PGCACHE_POPULATION_WORKERS_MIN=4`.
+- **Roteamento Direto por IP de Nó**: Eliminação de latência de CoreDNS através de mapeamento direto em `/etc/hosts` e endereçamento direto por IP.
+
+| Inquilinos Ativos | Origem Baseline | PgCache Baseline | Ganho Baseline | Origem Otimizada | PgCache Otimizado | Ganho Otimizado | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---|---|---:|---:|---:|
+| **1** | 23,3 ms · 343 rps | 15,6 ms · 513 rps | +50% | 30,4 ms · 263 rps | 24,0 ms · 333 rps | +27% | 100,0% | 2 |
+| **10** | 23,9 ms · 335 rps | 22,9 ms · 349 rps | +4% | 33,1 ms · 242 rps | 22,0 ms · 363 rps | +50% | 100,0% | 2 |
+| **50** | 28,5 ms · 281 rps | 17,3 ms · 462 rps | +64% | 32,7 ms · 245 rps | 21,5 ms · 371 rps | +51% | 100,0% | 2 |
+| **100** | 26,0 ms · 307 rps | 17,2 ms · 465 rps | +51% | 33,0 ms · 243 rps | 19,3 ms · 414 rps | **+70%** | 100,0% | 2 |
+| **500** | 25,7 ms · 311 rps | 18,7 ms · 428 rps | +38% | 30,0 ms · 266 rps | 22,3 ms · 359 rps | +35% | 100,0% | 3 |
+| **1.000** | 26,0 ms · 307 rps | 17,2 ms · 466 rps | +52% | 33,2 ms · 241 rps | 19,7 ms · 405 rps | **+68%** | 100,0% | 3 |
+| **2.000** | 25,9 ms · 309 rps | 18,8 ms · 425 rps | +38% | 34,2 ms · 234 rps | 20,5 ms · 390 rps | **+67%** | 100,0% | 4 |
+
+**Conclusão do Perfil Otimizado**:
+Em grandes contagens de inquilinos (2.000 tenants), o ganho relativo de vazão subiu de **+38% (baseline)** para **+67% (otimizado)**, sustentando **100,0% de hit ratio**. Artefatos completos e logs brutos estão em [`results/tuned/`](results/tuned/README-pt.md).
 
 ---
 

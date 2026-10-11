@@ -22,7 +22,7 @@ CHART_DIR="$REPO_ROOT/infra/helm/pgcache-mt"
 NS="${NS:-pgcache-mt}"
 
 usage() {
-  echo "Usage: $0 [--docker|--prod|--template|--uninstall|--check] [tag]"
+  echo "Usage: $0 [--docker|--prod|--do|--do-tuned|--template|--uninstall|--check] [tag]"
   exit 1
 }
 
@@ -75,6 +75,37 @@ case "$MODE" in
       -f "$CHART_DIR/values-do-lowcost.yaml" \
       --namespace "$NS" \
       --set image.pgcache.tag="$TAG"
+    echo ""
+    echo "--> Verifying node distribution (must land on 3 distinct nodes):"
+    kubectl -n "$NS" get pods -o wide || true
+    ;;
+
+  --do-tuned|--tuned)
+    echo "=== Deploying PgCache Benchmark Helm Chart to DigitalOcean (Tuned Profile) ==="
+    echo "Namespace: $NS"
+    echo "Tag:       $TAG"
+    echo "Values:    $CHART_DIR/values-do-tuned.yaml"
+    kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl label namespace "$NS" pod-security.kubernetes.io/enforce=privileged --overwrite
+
+    EXTRA_ARGS=()
+    ORIGIN_IP="$(kubectl -n "$NS" get pod -l app=origin -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+    if [ -n "$ORIGIN_IP" ]; then
+      echo "--> Configuring direct upstream URL to origin IP: $ORIGIN_IP"
+      EXTRA_ARGS+=(--set pgcache.upstreamUrl="postgres://bench:benchpass@$ORIGIN_IP:5432/bench")
+      EXTRA_ARGS+=(--set loadgen.originHost="$ORIGIN_IP")
+    fi
+    PGCACHE_IP="$(kubectl -n "$NS" get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+    if [ -n "$PGCACHE_IP" ]; then
+      echo "--> Configuring direct pgcache host to IP: $PGCACHE_IP"
+      EXTRA_ARGS+=(--set loadgen.pgcacheHost="$PGCACHE_IP")
+    fi
+
+    helm upgrade --install pgcache-mt "$CHART_DIR" \
+      -f "$CHART_DIR/values-do-tuned.yaml" \
+      --namespace "$NS" \
+      --set image.pgcache.tag="$TAG" \
+      "${EXTRA_ARGS[@]}"
     echo ""
     echo "--> Verifying node distribution (must land on 3 distinct nodes):"
     kubectl -n "$NS" get pods -o wide || true

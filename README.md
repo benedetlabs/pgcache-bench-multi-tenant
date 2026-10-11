@@ -27,6 +27,7 @@ the rest is the reasoning, including the parts we got wrong.
 11. [Step 4 — the measurement protocol](#11-step-4--the-measurement-protocol)
 12. [Sweep 1 — does the tenant count break the cache?](#12-sweep-1--does-the-tenant-count-break-the-cache)
    - [12.1 Multi-tenant scaling up to 2,000 tenants on DigitalOcean (DOKS)](#121-multi-tenant-scaling-up-to-2000-tenants-on-digitalocean-doks)
+   - [12.2 Tuned network & engine profile (Baseline vs Tuned)](#122-side-by-side-baseline-vs-tuned-network--engine-profile)
 13. [Sweep 2 — separating caching from saturation](#13-sweep-2--separating-caching-from-saturation)
 14. [Sweep 3 — writes](#14-sweep-3--writes)
 15. [Why the query shape decides everything](#15-why-the-query-shape-decides-everything)
@@ -837,6 +838,26 @@ To test whether extreme multi-tenancy causes key-space explosion or cache evicti
 - **Throughput gain remained positive throughout**: PgCache delivered between **+38% and +93% higher throughput** than the uncached database on standard low-cost cloud droplets.
 
 For detailed breakdowns by version, see the [`results/`](results/) directory.
+
+### 12.2 Side-by-Side: Baseline vs Tuned Network & Engine Profile
+
+To maximize PgCache throughput and eliminate network and concurrency bottlenecks, we implemented a **Tuned Profile**:
+- **Linux Network Stack Tuning**: Privileged `tune-net-stack` initContainer configuring `tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_max_syn_backlog=65535`, `tcp_tw_reuse=1`, and VirtIO RPS packet steering across all vCPUs (`rps_cpus=f`).
+- **PgCache Sizing**: `NUM_WORKERS=8` (matching droplet vCPU concurrency), `MEMO_CACHE_SIZE=1073741824` (1 GiB raw integer bytes), and `PGCACHE_POPULATION_WORKERS_MIN=4`.
+- **Direct Node IP Routing**: Bypassed CoreDNS latency through direct `/etc/hosts` mappings and direct pod IP addressing.
+
+| Active Tenants | Baseline Origin | Baseline PgCache | Baseline Gain | Tuned Origin | Tuned PgCache | Tuned Gain | Hit Ratio | Warm Passes |
+|---:|---|---|---:|---|---|---:|---:|---:|
+| **1** | 23.3 ms · 343 rps | 15.6 ms · 513 rps | +50% | 30.4 ms · 263 rps | 24.0 ms · 333 rps | +27% | 100.0% | 2 |
+| **10** | 23.9 ms · 335 rps | 22.9 ms · 349 rps | +4% | 33.1 ms · 242 rps | 22.0 ms · 363 rps | +50% | 100.0% | 2 |
+| **50** | 28.5 ms · 281 rps | 17.3 ms · 462 rps | +64% | 32.7 ms · 245 rps | 21.5 ms · 371 rps | +51% | 100.0% | 2 |
+| **100** | 26.0 ms · 307 rps | 17.2 ms · 465 rps | +51% | 33.0 ms · 243 rps | 19.3 ms · 414 rps | **+70%** | 100.0% | 2 |
+| **500** | 25.7 ms · 311 rps | 18.7 ms · 428 rps | +38% | 30.0 ms · 266 rps | 22.3 ms · 359 rps | +35% | 100.0% | 3 |
+| **1,000** | 26.0 ms · 307 rps | 17.2 ms · 466 rps | +52% | 33.2 ms · 241 rps | 19.7 ms · 405 rps | **+68%** | 100.0% | 3 |
+| **2,000** | 25.9 ms · 309 rps | 18.8 ms · 425 rps | +38% | 34.2 ms · 234 rps | 20.5 ms · 390 rps | **+67%** | 100.0% | 4 |
+
+**Tuned Profile Takeaway**:
+Under large tenant counts (2,000 tenants), throughput gain increased from **+38% (baseline)** to **+67% (tuned)**, while sustaining an unbroken **100.0% cache hit ratio**. Full artifacts and raw logs are located in [`results/tuned/`](results/tuned/README.md).
 
 ---
 

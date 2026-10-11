@@ -6,6 +6,7 @@ Este diretório contém os resultados das execuções de benchmark comparando ve
 - [**PgCache 0.6.3**](0.6.3/README-pt.md)
 - [**PgCache 0.6.4**](0.6.4/README-pt.md)
 - [**PgCache 0.7.0**](0.7.0/README-pt.md)
+- [**Perfil Otimizado / Tuned (v0.7.0)**](tuned/README-pt.md)
 
 Ambos os ambientes seguem rigorosamente o protocolo do benchmark (protocolo de consulta simples `-M simple`, sem transações explícitas `BEGIN...COMMIT`, aquecimento dinâmico estabilizado `< 1%`).
 
@@ -15,7 +16,7 @@ Ambos os ambientes seguem rigorosamente o protocolo do benchmark (protocolo de c
 
 Executado em um cluster de produção de baixo custo: 3 nós dedicados (`s-4vcpu-8gb`, `sfo3` single-AZ), `--ha=false`, `podAntiAffinity` estrito (1 nó exclusivo para cada: origin, pgcache, loadgen) e `hostNetwork: true`.
 
-### Varredura de Contagem de Tenants (1 a 2.000 Tenants)
+### 1.1 Varredura Multi-Versão Baseline (1 a 2.000 Tenants)
 
 | Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio (Todos) | Passos de Aquecimento |
 |---|---|---|---|---|---|---|
@@ -26,6 +27,20 @@ Executado em um cluster de produção de baixo custo: 3 nós dedicados (`s-4vcpu
 | **500 Tenants** | 25,7–32,2 ms (248–311 rps) | **16,7 ms** (478 rps, +93%) | **15,7 ms** (510 rps, +71%) | **18,7 ms** (428 rps, +38%) | **100,0%** | 3 |
 | **1.000 Tenants** | 24,5–26,2 ms (305–326 rps) | **17,5 ms** (458 rps, +50%) | **16,8 ms** (476 rps, +46%) | **17,2 ms** (466 rps, +52%) | **100,0%** | 3 |
 | **2.000 Tenants** | 25,6–26,0 ms (308–313 rps) | **18,3 ms** (438 rps, +40%) | **15,5 ms** (515 rps, +67%) | **18,8 ms** (425 rps, +38%) | **100,0%** | 4 |
+
+### 1.2 Comparativo Lado a Lado: Baseline vs Perfil Otimizado (PgCache 0.7.0)
+
+Comparando a configuração padrão do DOKS com o perfil otimizado (`tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_tw_reuse=1`, VirtIO RPS `rps_cpus=f`, roteamento direto por IP de nó via `/etc/hosts`, `NUM_WORKERS=8` e `MEMO_CACHE_SIZE=1073741824`):
+
+| Inquilinos Ativos | Origem Baseline | PgCache Baseline | Ganho Baseline | Origem Otimizada | PgCache Otimizado | Ganho Otimizado | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---|---|---:|---:|---:|
+| **1** | 23,3 ms · 343 rps | 15,6 ms · 513 rps | +50% | 30,4 ms · 263 rps | 24,0 ms · 333 rps | +27% | 100,0% | 2 |
+| **10** | 23,9 ms · 335 rps | 22,9 ms · 349 rps | +4% | 33,1 ms · 242 rps | 22,0 ms · 363 rps | +50% | 100,0% | 2 |
+| **50** | 28,5 ms · 281 rps | 17,3 ms · 462 rps | +64% | 32,7 ms · 245 rps | 21,5 ms · 371 rps | +51% | 100,0% | 2 |
+| **100** | 26,0 ms · 307 rps | 17,2 ms · 465 rps | +51% | 33,0 ms · 243 rps | 19,3 ms · 414 rps | **+70%** | 100,0% | 2 |
+| **500** | 25,7 ms · 311 rps | 18,7 ms · 428 rps | +38% | 30,0 ms · 266 rps | 22,3 ms · 359 rps | +35% | 100,0% | 3 |
+| **1.000** | 26,0 ms · 307 rps | 17,2 ms · 466 rps | +52% | 33,2 ms · 241 rps | 19,7 ms · 405 rps | **+68%** | 100,0% | 3 |
+| **2.000** | 25,9 ms · 309 rps | 18,8 ms · 425 rps | +38% | 34,2 ms · 234 rps | 20,5 ms · 390 rps | **+67%** | 100,0% | 4 |
 
 ---
 
@@ -105,3 +120,4 @@ Essa divergência decorre de quatro fatores estruturais, de hardware e de arquit
 - [`0.6.3/`](0.6.3/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.3`.
 - [`0.6.4/`](0.6.4/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.4`.
 - [`0.7.0/`](0.7.0/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.7.0`.
+- [`tuned/`](tuned/README-pt.md): Resultados completos, TSVs (`results.tsv`) e logs do Perfil Otimizado / Tuned (`0.7.0` com ajustes de rede e engine).

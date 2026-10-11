@@ -44,7 +44,7 @@ ex() {
   else
     local tries=0 out=""
     while [ $tries -lt 3 ]; do
-      if out=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c "$1" 2>&1); then
+      if out=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; $1" 2>&1); then
         echo "$out"
         return 0
       fi

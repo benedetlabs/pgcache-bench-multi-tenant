@@ -6,6 +6,7 @@ This directory contains benchmark verification runs comparing releases of **PgCa
 - [**PgCache 0.6.3**](0.6.3/README.md)
 - [**PgCache 0.6.4**](0.6.4/README.md)
 - [**PgCache 0.7.0**](0.7.0/README.md)
+- [**Tuned Profile (v0.7.0)**](tuned/README.md)
 
 Both environments follow the benchmark protocol (simple query protocol `-M simple`, no explicit transactions, dynamic warm-up settling `< 1%`).
 
@@ -15,7 +16,7 @@ Both environments follow the benchmark protocol (simple query protocol `-M simpl
 
 Executed on a low-cost production cluster: 3 dedicated nodes (`s-4vcpu-8gb`, `sfo3` single-AZ), `--ha=false`, strict `podAntiAffinity` (1 node each for origin, pgcache, loadgen), and `hostNetwork: true`.
 
-### Tenant Count Sweep (1 to 2,000 Tenants)
+### 1.1 Multi-Version Baseline Sweep (1 to 2,000 Tenants)
 
 | Active Tenants | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio (All) | Warm Passes |
 |---|---|---|---|---|---|---|
@@ -26,6 +27,20 @@ Executed on a low-cost production cluster: 3 dedicated nodes (`s-4vcpu-8gb`, `sf
 | **500 Tenants** | 25.7–32.2 ms (248–311 rps) | **16.7 ms** (478 rps, +93%) | **15.7 ms** (510 rps, +71%) | **18.7 ms** (428 rps, +38%) | **100.0%** | 3 |
 | **1,000 Tenants** | 24.5–26.2 ms (305–326 rps) | **17.5 ms** (458 rps, +50%) | **16.8 ms** (476 rps, +46%) | **17.2 ms** (466 rps, +52%) | **100.0%** | 3 |
 | **2,000 Tenants** | 25.6–26.0 ms (308–313 rps) | **18.3 ms** (438 rps, +40%) | **15.5 ms** (515 rps, +67%) | **18.8 ms** (425 rps, +38%) | **100.0%** | 4 |
+
+### 1.2 Side-by-Side: Baseline vs Tuned Network & Engine Profile (PgCache 0.7.0)
+
+Comparing the default cloud setup against the tuned profile (`tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_tw_reuse=1`, VirtIO RPS `rps_cpus=f`, direct host IP routing via `/etc/hosts`, `NUM_WORKERS=8`, and `MEMO_CACHE_SIZE=1073741824`):
+
+| Active Tenants | Baseline Origin | Baseline PgCache | Baseline Gain | Tuned Origin | Tuned PgCache | Tuned Gain | Hit Ratio | Warm Passes |
+|---:|---|---|---:|---|---|---:|---:|---:|
+| **1** | 23.3 ms · 343 rps | 15.6 ms · 513 rps | +50% | 30.4 ms · 263 rps | 24.0 ms · 333 rps | +27% | 100.0% | 2 |
+| **10** | 23.9 ms · 335 rps | 22.9 ms · 349 rps | +4% | 33.1 ms · 242 rps | 22.0 ms · 363 rps | +50% | 100.0% | 2 |
+| **50** | 28.5 ms · 281 rps | 17.3 ms · 462 rps | +64% | 32.7 ms · 245 rps | 21.5 ms · 371 rps | +51% | 100.0% | 2 |
+| **100** | 26.0 ms · 307 rps | 17.2 ms · 465 rps | +51% | 33.0 ms · 243 rps | 19.3 ms · 414 rps | **+70%** | 100.0% | 2 |
+| **500** | 25.7 ms · 311 rps | 18.7 ms · 428 rps | +38% | 30.0 ms · 266 rps | 22.3 ms · 359 rps | +35% | 100.0% | 3 |
+| **1,000** | 26.0 ms · 307 rps | 17.2 ms · 466 rps | +52% | 33.2 ms · 241 rps | 19.7 ms · 405 rps | **+68%** | 100.0% | 3 |
+| **2,000** | 25.9 ms · 309 rps | 18.8 ms · 425 rps | +38% | 34.2 ms · 234 rps | 20.5 ms · 390 rps | **+67%** | 100.0% | 4 |
 
 ---
 
@@ -105,3 +120,4 @@ This discrepancy is driven by four structural, hardware, and architectural facto
 - [`0.6.3/`](0.6.3/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.6.3`.
 - [`0.6.4/`](0.6.4/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.6.4`.
 - [`0.7.0/`](0.7.0/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.7.0`.
+- [`tuned/`](tuned/): Full results, TSVs (`results.tsv`), and logs for Tuned Profile (`0.7.0` with network & engine tuning).

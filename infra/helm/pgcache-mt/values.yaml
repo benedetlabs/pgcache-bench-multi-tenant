@@ -13,6 +13,14 @@ hostNetwork:
   # If the cluster forbids hostNetwork via Pod Security admission, set to false.
   enabled: true
 
+# Linux network stack tuning via privileged initContainer
+netTune:
+  enabled: false
+  image: "busybox:1.36"
+
+# Optional static hostAliases mappings for bypassing CoreDNS
+hostAliases: []
+
 # Image definitions
 image:
   origin:
@@ -65,6 +73,8 @@ pgcache:
     - review
   telemetry: "off"
   workers: 4
+  populationWorkersMin: ""
+  memoCacheSize: ""
   listenPort: 6432
   metricsPort: 9090
   resources:

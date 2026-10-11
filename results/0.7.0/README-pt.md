@@ -52,7 +52,21 @@ Avaliando a expansão do espaço de consultas em 1, 10, 50, 100, 500, 1.000 e 2.
 | 1.000 | 26,0 ms · 307 rps | 17,2 ms · 466 rps | +52% | 100,0% | 3 |
 | 2.000 | 25,9 ms · 309 rps | 18,8 ms · 425 rps | +38% | 100,0% | 4 |
 
-### 3.2 Ambiente Local Docker (1 a 1.000 Tenants)
+### 3.2 DigitalOcean Kubernetes — Perfil Otimizado / Tuned (Comparativo Baseline vs Otimizado)
+
+Avaliando o impacto dos ajustes na pilha de rede Linux (`tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_tw_reuse=1`, VirtIO RPS `rps_cpus=f`), roteamento direto por IP de nó (sem CoreDNS) e dimensionamento do motor PgCache (`NUM_WORKERS=8`, `MEMO_CACHE_SIZE=1073741824`, `PGCACHE_POPULATION_WORKERS_MIN=4`):
+
+| Inquilinos Ativos | Origem Baseline | PgCache Baseline | Ganho Baseline | Origem Otimizada | PgCache Otimizado | Ganho Otimizado | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---|---|---:|---:|---:|
+| **1** | 23,3 ms · 343 rps | 15,6 ms · 513 rps | +50% | 30,4 ms · 263 rps | 24,0 ms · 333 rps | +27% | 100,0% | 2 |
+| **10** | 23,9 ms · 335 rps | 22,9 ms · 349 rps | +4% | 33,1 ms · 242 rps | 22,0 ms · 363 rps | +50% | 100,0% | 2 |
+| **50** | 28,5 ms · 281 rps | 17,3 ms · 462 rps | +64% | 32,7 ms · 245 rps | 21,5 ms · 371 rps | +51% | 100,0% | 2 |
+| **100** | 26,0 ms · 307 rps | 17,2 ms · 465 rps | +51% | 33,0 ms · 243 rps | 19,3 ms · 414 rps | **+70%** | 100,0% | 2 |
+| **500** | 25,7 ms · 311 rps | 18,7 ms · 428 rps | +38% | 30,0 ms · 266 rps | 22,3 ms · 359 rps | +35% | 100,0% | 3 |
+| **1.000** | 26,0 ms · 307 rps | 17,2 ms · 466 rps | +52% | 33,2 ms · 241 rps | 19,7 ms · 405 rps | **+68%** | 100,0% | 3 |
+| **2.000** | 25,9 ms · 309 rps | 18,8 ms · 425 rps | +38% | 34,2 ms · 234 rps | 20,5 ms · 390 rps | **+67%** | 100,0% | 4 |
+
+### 3.3 Ambiente Local Docker (1 a 1.000 Tenants)
 
 Avaliando a linha de base em host único no Docker em 1, 10, 50, 200, 500 e 1.000 tenants ativos:
 
@@ -99,9 +113,11 @@ Testando a resiliência à invalidação de cache com carga mista (8 clientes, 1
 ## 6. Artefatos Brutos
 
 - Dados legíveis por máquina: [`results.tsv`](results.tsv)
-- TSV do DigitalOcean DOKS: [`results-doks.tsv`](results-doks.tsv)
+- TSV do DigitalOcean DOKS Baseline: [`results-doks.tsv`](results-doks.tsv)
+- TSV do DigitalOcean DOKS Otimizado: [`results-tuned.tsv`](results-tuned.tsv)
 - TSV do Docker Local: [`results-docker.tsv`](results-docker.tsv)
-- Log bruto do sweep de tenants (DOKS): [`run-tenants-doks.txt`](run-tenants-doks.txt)
+- Log bruto do sweep de tenants (DOKS Baseline): [`run-tenants-doks.txt`](run-tenants-doks.txt)
+- Log bruto do sweep de tenants (DOKS Otimizado): [`run-tenants-tuned.txt`](run-tenants-tuned.txt)
 - Log bruto do sweep de tenants (Docker): [`run-tenants-docker.txt`](run-tenants-docker.txt)
 - Log bruto de concorrência (Docker): [`run-clients.txt`](run-clients.txt)
 - Log bruto de escritas (Docker): [`run-writes.txt`](run-writes.txt)

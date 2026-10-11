@@ -50,7 +50,7 @@ CMD="${1:-}"
 
 CLUSTER_NAME="${2:-pgcache-bench}"
 SIZE="${3:-s-4vcpu-8gb}"
-REGION="${4:-sfo2}"
+REGION="${4:-sfo3}"
 
 case "$CMD" in
   create)
@@ -120,8 +120,9 @@ case "$CMD" in
 
   deploy)
     TAG="${2:-0.7.0}"
-    echo "--> Deploying benchmark to current cluster with DigitalOcean budget profile..."
-    "$REPO_ROOT/scripts/helm-deploy.sh" --do "$TAG"
+    PROFILE="${3:---do-tuned}"
+    echo "--> Deploying benchmark to current cluster with DigitalOcean profile ($PROFILE)..."
+    "$REPO_ROOT/scripts/helm-deploy.sh" "$PROFILE" "$TAG"
     echo ""
     echo "--> Monitor pod status with:"
     echo "    kubectl -n pgcache-mt get pods -o wide -w"
