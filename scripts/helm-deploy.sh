@@ -64,6 +64,22 @@ case "$MODE" in
     kubectl -n "$NS" get pods -o wide || true
     ;;
 
+  --do|--do-lowcost|--digitalocean)
+    echo "=== Deploying PgCache Benchmark Helm Chart to DigitalOcean (Budget Profile) ==="
+    echo "Namespace: $NS"
+    echo "Tag:       $TAG"
+    echo "Values:    $CHART_DIR/values-do-lowcost.yaml"
+    kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl label namespace "$NS" pod-security.kubernetes.io/enforce=privileged --overwrite
+    helm upgrade --install pgcache-mt "$CHART_DIR" \
+      -f "$CHART_DIR/values-do-lowcost.yaml" \
+      --namespace "$NS" \
+      --set image.pgcache.tag="$TAG"
+    echo ""
+    echo "--> Verifying node distribution (must land on 3 distinct nodes):"
+    kubectl -n "$NS" get pods -o wide || true
+    ;;
+
   --template)
     echo "=== Rendering Helm Template Manifests ==="
     helm template pgcache-mt "$CHART_DIR" \

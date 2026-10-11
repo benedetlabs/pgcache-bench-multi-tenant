@@ -1,0 +1,79 @@
+# Low-cost DigitalOcean Kubernetes profile for pgcache-mt benchmark.
+# Sized for 3 nodes of s-4vcpu-8gb ($0.071/hr each = ~$0.21/hr total).
+# Preserves strict anti-affinity (1 pod per node) and hostNetwork performance.
+
+affinity:
+  # Enforces 3 separate physical nodes across origin, pgcache, and loadgen
+  enabled: true
+
+hostNetwork:
+  # Direct node IP bypasses overlay network latency
+  enabled: true
+
+image:
+  origin:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  pgcache:
+    repository: pgcache/pgcache
+    tag: "0.7.0"
+    pullPolicy: IfNotPresent
+  loadgen:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  metricsReader:
+    repository: alpine
+    tag: "3.20"
+    pullPolicy: IfNotPresent
+
+origin:
+  database: bench
+  user: bench
+  password: benchpass
+  sharedBuffers: "512MB"
+  maxConnections: 500
+  workMem: "16MB"
+  maintenanceWorkMem: "256MB"
+  randomPageCost: "1.1"
+  resources:
+    requests:
+      cpu: "2500m"
+      memory: "5Gi"
+  storage:
+    size: 25Gi
+    storageClassName: "do-block-storage"
+
+pgcache:
+  allowedTables:
+    - product
+    - category
+    - seller
+    - customer
+    - orders
+    - order_item
+    - review
+  telemetry: "off"
+  workers: 4
+  listenPort: 6432
+  metricsPort: 9090
+  resources:
+    requests:
+      cpu: "2500m"
+      memory: "5Gi"
+
+loadgen:
+  resources:
+    requests:
+      cpu: "2500m"
+      memory: "2Gi"
+  storage:
+    size: 15Gi
+    storageClassName: "do-block-storage"
+
+metricsReader:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"

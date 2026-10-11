@@ -124,6 +124,12 @@ helm install pgcache-mt infra/helm/pgcache-mt \
   -f infra/helm/pgcache-mt/values-docker.yaml \
   --namespace pgcache-mt --create-namespace \
   --set image.pgcache.tag="0.7.0-arm64"
+
+# DigitalOcean low-cost 3-node cluster (~$0.21/hr total, free control plane via --ha=false):
+./scripts/do-cluster.sh create
+./scripts/do-cluster.sh deploy 0.7.0
+# When finished, destroy the cluster and all volumes:
+./scripts/do-cluster.sh destroy
 ```
 
 ### Multi-version results & local Docker verification
