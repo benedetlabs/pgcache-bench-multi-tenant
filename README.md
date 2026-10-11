@@ -20,11 +20,13 @@ the rest is the reasoning, including the parts we got wrong.
 5. [Why multi-tenant, and what we expected](#5-why-multi-tenant-and-what-we-expected)
 6. [The trick: a pgbench script is a request](#6-the-trick-a-pgbench-script-is-a-request)
 7. [**The environment, exactly**](#7-the-environment-exactly)
+   - [7.7 The DigitalOcean low-cost setup (DOKS)](#77-the-digitalocean-low-cost-kubernetes-setup-doks)
 8. [Step 1 — the schema](#8-step-1--the-schema)
 9. [Step 2 — denormalising the tenant](#9-step-2--denormalising-the-tenant)
 10. [Step 3 — the request](#10-step-3--the-request)
 11. [Step 4 — the measurement protocol](#11-step-4--the-measurement-protocol)
 12. [Sweep 1 — does the tenant count break the cache?](#12-sweep-1--does-the-tenant-count-break-the-cache)
+   - [12.1 Multi-tenant scaling up to 2,000 tenants on DigitalOcean (DOKS)](#121-multi-tenant-scaling-up-to-2000-tenants-on-digitalocean-doks)
 13. [Sweep 2 — separating caching from saturation](#13-sweep-2--separating-caching-from-saturation)
 14. [Sweep 3 — writes](#14-sweep-3--writes)
 15. [Why the query shape decides everything](#15-why-the-query-shape-decides-everything)
@@ -464,8 +466,11 @@ To validate the benchmark on real cloud infrastructure without enterprise cloud 
 | **High Availability** | `--ha=false` | Disables redundant control plane to keep control plane fee at $0. |
 | **Region / Topology** | `sfo3` (single-AZ) | Strictly colocates all three worker nodes in one availability zone to avoid cross-AZ latency jitter. |
 | **Storage Class** | `do-block-storage` | Native block storage via DigitalOcean CSI (`dobs.csi.digitalocean.com`). |
+| **Storage Volumes** | 25 GiB (`origin`), 15 GiB (`loadgen`) | Sized for multi-tenant database scaling with `do-block-storage`. |
 | **Pod Anti-Affinity** | `podAntiAffinity` (required) | Enforces 1 node each for `origin`, `pgcache`, and `loadgen` to eliminate CPU competition. |
 | **Networking** | `hostNetwork: true` | Direct host IP routing bypassing overlay encapsulation. |
+| **CPU Limits Policy** | `resources.limits.cpu` unset | Never set hard CPU limits: prevents Linux CFS throttling jitter that introduces artificial p99 latency spikes. |
+| **Pod Resource Requests** | `origin`: 2500m / 5Gi, `pgcache`: 2500m / 5Gi, `loadgen`: 2500m / 2Gi | Guarantees resource reservation while leaving headroom for node OS and daemonsets. |
 | **Metrics Port** | `METRICS_PORT=9091` | Prevents host port conflict with DigitalOcean's managed Cilium agent (which binds host port 9090). |
 | **Origin Settings** | `shared_buffers=512MB` | Preserves in-memory evaluation for the 500k-orders baseline on 8 GB worker nodes. |
 

@@ -23,12 +23,13 @@ Verification run for **PgCache v0.7.0** (`pgcache/pgcache:0.7.0`) executed on Di
 | **Cluster Nodes** | 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM each) |
 | **Control Plane** | `--ha=false` ($0 control plane cost) |
 | **Node OS / Runtime** | Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3 |
-| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`) |
+| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`), 25 GiB (origin) and 15 GiB (loadgen) |
 | **Pod Distribution** | Strict `podAntiAffinity` (1 node each for `origin`, `pgcache`, `loadgen`) |
 | **Networking** | `hostNetwork: true` (direct node IP routing, bypassing overlay NAT) |
+| **CPU Limits Policy** | Zero hard CPU limits (`resources.limits.cpu` unset) to eliminate CFS throttling jitter |
 | **Origin Pod** | PostgreSQL 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB` |
 | **PgCache Pod** | PgCache 0.7.0 (`pgcache/pgcache:0.7.0`), requests: 2500m CPU / 5Gi RAM, `workers=4`, `metricsPort=9091` |
-| **Loadgen Pod** | PostgreSQL 17 (`postgres:17` com pgbench), requests: 2500m CPU / 2Gi RAM |
+| **Loadgen Pod** | PostgreSQL 17 (`postgres:17` with pgbench), requests: 2500m CPU / 2Gi RAM |
 | **Metrics Reader Pod** | Alpine 3.20 (`alpine:3.20`), requests: 50m CPU / 64Mi RAM |
 | **Dataset Size** | 500k orders, 2M items (~594 MB total), 2,000 tenants (250 orders/tenant) |
 

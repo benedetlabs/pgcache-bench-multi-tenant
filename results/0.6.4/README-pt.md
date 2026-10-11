@@ -23,9 +23,10 @@ Execução de verificação para **PgCache v0.6.4** (`pgcache/pgcache:0.6.4`) no
 | **Nós do Cluster** | 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM cada) |
 | **Control Plane** | `--ha=false` (custo de control plane a $0) |
 | **SO do Nó / Runtime** | Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3 |
-| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`) |
+| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`), 25 GiB (origem) e 15 GiB (gerador de carga) |
 | **Distribuição de Pods** | `podAntiAffinity` estrito (1 nó exclusivo para cada: `origin`, `pgcache`, `loadgen`) |
 | **Rede** | `hostNetwork: true` (roteamento IP direto do nó, eliminando NAT de overlay) |
+| **Política de Limites de CPU** | Sem limites rígidos de CPU (`resources.limits.cpu` não configurado) para eliminar variações de CFS throttling |
 | **Pod Origin** | PostgreSQL 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB` |
 | **Pod PgCache** | PgCache 0.6.4 (`pgcache/pgcache:0.6.4`), requests: 2500m CPU / 5Gi RAM, `workers=4`, `metricsPort=9091` |
 | **Pod Loadgen** | PostgreSQL 17 (`postgres:17` com pgbench), requests: 2500m CPU / 2Gi RAM |
@@ -56,11 +57,11 @@ Separando velocidade pura do cache de leitura da saturação da origem (escala d
 
 | Clientes | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
 |---:|---|---|---:|---:|---:|
-| 1 | 10,9 ms · 92 rps | 5,15 ms · 194 rps | +111% | 100,0% | 2 |
-| 4 | 19,8 ms · 202 rps | 8,88 ms · 451 rps | +123% | 100,0% | 2 |
-| 8 | 38,1 ms · 210 rps | 15,34 ms · 522 rps | +149% | 100,0% | 2 |
-| 16 | 58,3 ms · 275 rps | 24,96 ms · 641 rps | +133% | 100,0% | 2 |
-| 32 | 104,2 ms · 307 rps | 42,81 ms · 748 rps | +144% | 100,0% | 2 |
+| 1 | 10,55 ms · 95 rps | 5,15 ms · 194 rps | +104% | 100,0% | 2 |
+| 4 | 18,78 ms · 213 rps | 10,51 ms · 381 rps | +79% | 100,0% | 2 |
+| 8 | 38,10 ms · 210 rps | 15,34 ms · 522 rps | +149% | 100,0% | 2 |
+| 16 | 61,58 ms · 260 rps | 25,54 ms · 627 rps | +141% | 100,0% | 2 |
+| 32 | 104,07 ms · 307 rps | 42,81 ms · 748 rps | +144% | 100,0% | 2 |
 
 ---
 
@@ -70,12 +71,12 @@ Testando a resiliência à invalidação de cache com carga mista (8 clientes, 1
 
 | Escritas | Tenants de Escrita | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
 |---:|---:|---|---|---:|---:|---:|
-| 0% | 1000 | 36,0 ms · 222 rps | 15,12 ms · 529 rps | +138% | 100,0% | 2 |
-| 5% | 1 | 32,7 ms · 244 rps | 13,63 ms · 587 rps | +141% | 100,0% | 2 |
-| 5% | 10 | 32,3 ms · 247 rps | 13,75 ms · 582 rps | +136% | 100,0% | 2 |
-| 5% | 1000 | 32,7 ms · 245 rps | 13,39 ms · 598 rps | +144% | 100,0% | 2 |
-| 10% | 1 | 32,1 ms · 249 rps | 12,72 ms · 629 rps | +153% | 100,0% | 2 |
-| 10% | 1000 | 30,6 ms · 261 rps | 12,67 ms · 631 rps | +142% | 100,0% | 2 |
+| 0% | 1000 | 34,3 ms · 233 rps | 13,86 ms · 577 rps | +148% | 100,0% | 2 |
+| 5% | 1 | 32,1 ms · 249 rps | 13,38 ms · 598 rps | +140% | 100,0% | 2 |
+| 5% | 10 | 32,3 ms · 248 rps | 13,10 ms · 611 rps | +146% | 100,0% | 2 |
+| 5% | 1000 | 32,7 ms · 245 rps | 13,31 ms · 601 rps | +145% | 100,0% | 2 |
+| 10% | 1 | 30,1 ms · 265 rps | 12,47 ms · 642 rps | +142% | 100,0% | 2 |
+| 10% | 1000 | 29,8 ms · 268 rps | 12,67 ms · 631 rps | +135% | 100,0% | 2 |
 
 ---
 

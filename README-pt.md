@@ -20,11 +20,13 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 5. [Por que multi-tenant, e o que esperávamos](#5-por-que-multi-tenant-e-o-que-esperávamos)
 6. [O truque: um script do pgbench é uma requisição](#6-o-truque-um-script-do-pgbench-é-uma-requisição)
 7. [**O ambiente, exatamente**](#7-o-ambiente-exatamente)
+   - [7.7 O ambiente de baixo custo no DigitalOcean Kubernetes (DOKS)](#77-o-ambiente-de-baixo-custo-no-digitalocean-kubernetes-doks)
 8. [Passo 1 — o esquema](#8-passo-1--o-esquema)
 9. [Passo 2 — denormalizar o tenant](#9-passo-2--denormalizar-o-tenant)
 10. [Passo 3 — a requisição](#10-passo-3--a-requisição)
 11. [Passo 4 — o protocolo de medição](#11-passo-4--o-protocolo-de-medição)
 12. [Varredura 1 — o número de tenants quebra o cache?](#12-varredura-1--o-número-de-tenants-quebra-o-cache)
+   - [12.1 Escala multi-tenant até 2.000 tenants no DigitalOcean (DOKS)](#121-escala-multi-tenant-até-2000-tenants-no-digitalocean-doks)
 13. [Varredura 2 — separando cache de saturação](#13-varredura-2--separando-cache-de-saturação)
 14. [Varredura 3 — escrita](#14-varredura-3--escrita)
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
@@ -469,8 +471,11 @@ Para validar o benchmark em uma infraestrutura cloud real sem custos elevados, a
 | **Alta Disponibilidade** | `--ha=false` | Desabilita redundância no control plane mantendo custo a $0. |
 | **Região / Topologia** | `sfo3` (single-AZ) | Garante que os 3 nós fiquem na mesma zona, eliminando variações de latência entre zonas. |
 | **Storage Class** | `do-block-storage` | Armazenamento de bloco via CSI da DigitalOcean (`dobs.csi.digitalocean.com`). |
+| **Volumes de Armazenamento** | 25 GiB (`origin`), 15 GiB (`loadgen`) | Dimensionados para a escala multi-tenant via `do-block-storage`. |
 | **Pod Anti-Affinity** | `podAntiAffinity` (obrigatório) | Garante 1 nó exclusivo para cada pod (`origin`, `pgcache`, `loadgen`) para evitar disputa por CPU. |
 | **Rede** | `hostNetwork: true` | Roteamento direto no IP do host contornando sobrecarga de encapsulamento de overlay. |
+| **Política de Limites de CPU** | `resources.limits.cpu` não configurado | Nunca definir limites rígidos de CPU: previne throttling do CFS do Linux que gera picos artificiais no p99. |
+| **Requests de Recursos** | `origin`: 2500m / 5Gi, `pgcache`: 2500m / 5Gi, `loadgen`: 2500m / 2Gi | Garante reserva de recursos deixando margem para o SO do nó e daemonsets. |
 | **Porta de Métricas** | `METRICS_PORT=9091` | Evita conflito com o agente Cilium do DigitalOcean (que escuta na porta 9090 do host). |
 | **Configuração da Origem**| `shared_buffers=512MB` | Mantém os 500k pedidos inteiramente em memória nos nós de 8 GB. |
 

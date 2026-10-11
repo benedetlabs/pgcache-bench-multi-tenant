@@ -18,16 +18,18 @@ Todos os testes foram executados na carga multi-tenant de SaaS (500k pedidos, 2M
 - **Nós**: 3 Droplets dedicados tamanho `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM cada, ~$0,071/hora cada = ~$0,21/hora total)
 - **Alta Disponibilidade**: `--ha=false` (taxa de control plane a $0)
 - **Sistema Operacional dos Nós**: Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3
-- **Armazenamento**: Provisionador CSI `do-block-storage` (`dobs.csi.digitalocean.com`)
+- **Armazenamento**: Provisionador CSI `do-block-storage` (`dobs.csi.digitalocean.com`), volume de 25 GiB para a origem, 15 GiB para o gerador de carga
 - **Isolamento de Pods**: `podAntiAffinity` estrito no Kubernetes garantindo nós físicos separados para `origin`, `pgcache` e `loadgen`
 - **Rede**: `hostNetwork: true` (ligação direta ao IP do nó, evitando encapsulamento e overhead de overlay de rede)
+- **Política de Limites de CPU**: Sem limites rígidos de CPU (`resources.limits.cpu` não configurado) em todos os pods para eliminar totalmente atrasos por CFS throttling do kernel Linux
 - **PostgreSQL Origem**: Versão 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB`, `max_connections=500`, `work_mem=16MB`, `maintenance_work_mem=256MB`, `random_page_cost=1.1`, `wal_level=logical`
 - **Configuração PgCache**: Requests: 2500m CPU / 5Gi RAM, 4 threads de trabalho, porta 6432, `METRICS_PORT=9091` (ajustado para evitar conflito com a porta 9090 do Cilium no DO), tabelas permitidas: `product,category,seller,customer,orders,order_item,review`
-- **Gerador de Carga**: `postgres:17` com pgbench rodando protocolo simples (`-M simple`), sem transações explícitas (`BEGIN...COMMIT`), 8 clientes concorrentes, 4 threads, janelas de medição de 30s
+- **Gerador de Carga**: `postgres:17` com pgbench rodando protocolo simples (`-M simple`), sem transações explícitas (`BEGIN...COMMIT`), requests: 2500m CPU / 2Gi RAM, 8 clientes concorrentes, 4 threads, janelas de medição de 30s
+- **Metrics Reader**: `alpine:3.20`, requests: 50m CPU / 64Mi RAM, coletando `/metrics` do PgCache via IP do host
 
 ---
 
-## 2. Comparativo de Varredura de Tenants (1 a 2.000 Tenants)
+## 2. Comparativo de Varredura de Tenants (1 a 2.000 Tenants no DOKS)
 
 O Sweep 1 avaliou a explosão do espaço de chaves à medida que os tenants ativos escalaram de 1 para 2.000:
 
@@ -43,7 +45,22 @@ O Sweep 1 avaliou a explosão do espaço de chaves à medida que os tenants ativ
 
 ---
 
-## 3. Principais Descobertas
+## 3. Comparativo de Concorrência e Resiliência a Escritas (Linha de Base)
+
+Comparando escalabilidade com concorrência e perfis de invalidação de escrita em 1.000 tenants:
+
+| Métrica / Cenário | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 |
+|---|---|---|---|---|
+| **Hit Ratio (Todas as Células)** | N/A | **100,0%** | **100,0%** | **100,0%** (1..500t) / **99,7%** (1.000t) |
+| **Latência com 1 Cliente** | 10,5–11,5 ms | **5,53 ms** (2,0× mais rápido) | **5,15 ms** (2,1× mais rápido) | **5,55 ms** (2,1× mais rápido) |
+| **Latência com 8 Clientes (Leitura)** | 35,4–38,1 ms | **14,62 ms** (+142%) | **15,34 ms** (+149%) | **14,90 ms** (+145%) |
+| **Vazão Máxima (32 clientes)** | 297–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) |
+| **Resiliência a Escrita (5% esc, 1 tenant)** | 239–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) |
+| **Resiliência a Escrita (10% esc, 1.000 tenants)** | 251–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) |
+
+---
+
+## 4. Principais Descobertas
 
 1. **Taxa de Acerto de 100,0% Ininterrupta até 2.000 Tenants**:
    Todas as versões avaliadas (0.6.3, 0.6.4, 0.7.0) mantiveram uma taxa de acerto perfeita de **100,0%** em todas as faixas de tenants até 2.000 tenants ativos. A expansão de 2.000× no espaço de chaves multi-tenant não saturou a memória nem causou thrashing no cache.
@@ -62,7 +79,7 @@ O Sweep 1 avaliou a explosão do espaço de chaves à medida que os tenants ativ
 
 ---
 
-## 4. Estrutura de Diretórios por Tag
+## 5. Estrutura de Diretórios por Tag
 
 - [`0.6.3/`](0.6.3/README-pt.md): Resultados completos, TSV e logs brutos da tag `0.6.3`.
 - [`0.6.4/`](0.6.4/README-pt.md): Resultados completos, TSV e logs brutos da tag `0.6.4`.

@@ -23,9 +23,10 @@ Verification run for **PgCache v0.6.3** (`pgcache/pgcache:0.6.3`) executed on Di
 | **Cluster Nodes** | 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM) |
 | **Control Plane** | `--ha=false` ($0 control plane cost) |
 | **Node OS / Runtime** | Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3 |
-| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`) |
+| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`), 25 GiB (origin) and 15 GiB (loadgen) |
 | **Pod Distribution** | Strict `podAntiAffinity` (1 node each for `origin`, `pgcache`, `loadgen`) |
 | **Networking** | `hostNetwork: true` (direct node IP routing, bypassing overlay NAT) |
+| **CPU Limits Policy** | Zero hard CPU limits (`resources.limits.cpu` unset) to eliminate CFS throttling jitter |
 | **Origin Pod** | PostgreSQL 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB` |
 | **PgCache Pod** | PgCache 0.6.3 (`pgcache/pgcache:0.6.3`), requests: 2500m CPU / 5Gi RAM, `workers=4`, `metricsPort=9091` |
 | **Loadgen Pod** | PostgreSQL 17 (`postgres:17` with pgbench), requests: 2500m CPU / 2Gi RAM |

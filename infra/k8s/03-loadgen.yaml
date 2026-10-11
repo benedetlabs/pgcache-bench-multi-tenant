@@ -37,7 +37,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchExpressions:
-                  - {key: lab/role, operator: NotIn, values: [loadgen]}
+                  - {key: lab/role, operator: In, values: [origin, pgcache]}
               topologyKey: kubernetes.io/hostname
       containers:
         - name: bench

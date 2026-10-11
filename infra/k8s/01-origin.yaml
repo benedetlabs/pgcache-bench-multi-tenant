@@ -47,7 +47,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchExpressions:
-                  - {key: lab/role, operator: NotIn, values: [origin]}
+                  - {key: lab/role, operator: In, values: [pgcache, loadgen]}
               topologyKey: kubernetes.io/hostname
       containers:
         - name: postgres

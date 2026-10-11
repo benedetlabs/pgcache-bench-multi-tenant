@@ -18,16 +18,18 @@ All tests were executed under the multi-tenant SaaS workload (500k orders, 2M or
 - **Nodes**: 3 dedicated worker Droplets of size `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM, ~$0.071/hr each = ~$0.21/hr total)
 - **High Availability**: `--ha=false` ($0 control plane fee)
 - **Node Operating System**: Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3
-- **Storage**: `do-block-storage` CSI provisioner (`dobs.csi.digitalocean.com`)
+- **Storage**: `do-block-storage` CSI provisioner (`dobs.csi.digitalocean.com`), 25 GiB volume for origin, 15 GiB for loadgen
 - **Pod Placement & Isolation**: Strict Kubernetes `podAntiAffinity` enforcing distinct physical nodes for `origin`, `pgcache`, and `loadgen`
 - **Networking**: `hostNetwork: true` (direct host node IP binding, bypassing overlay container network encapsulation)
+- **CPU Limits Policy**: Zero hard CPU limits (`resources.limits.cpu` unset) across all pods to completely eliminate Linux CFS throttling jitter
 - **Origin PostgreSQL**: Version 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB`, `max_connections=500`, `work_mem=16MB`, `maintenance_work_mem=256MB`, `random_page_cost=1.1`, `wal_level=logical`
 - **PgCache Configuration**: Requests: 2500m CPU / 5Gi RAM, 4 worker threads, port 6432, `METRICS_PORT=9091` (adjusted to prevent conflict with Cilium's 9090 on DO), allowlisted tables: `product,category,seller,customer,orders,order_item,review`
-- **Load Generator**: `postgres:17` with pgbench running simple query protocol (`-M simple`), no explicit transactions (`BEGIN...COMMIT`), 8 concurrent clients, 4 threads, 30s measurement windows
+- **Load Generator**: `postgres:17` with pgbench running simple query protocol (`-M simple`), no explicit transactions (`BEGIN...COMMIT`), requests: 2500m CPU / 2Gi RAM, 8 concurrent clients, 4 threads, 30s measurement windows
+- **Metrics Reader**: `alpine:3.20`, requests: 50m CPU / 64Mi RAM, scraping PgCache `/metrics` over host IP
 
 ---
 
-## 2. Cross-Version Tenant Sweep Comparison (1 to 2,000 Tenants)
+## 2. Cross-Version Tenant Sweep Comparison (1 to 2,000 Tenants on DOKS)
 
 Sweep 1 evaluated key-space explosion as active tenants scaled from 1 to 2,000 tenants:
 
@@ -43,7 +45,22 @@ Sweep 1 evaluated key-space explosion as active tenants scaled from 1 to 2,000 t
 
 ---
 
-## 3. Key Findings
+## 3. Cross-Version Concurrency & Write Resilience Comparison (Baseline)
+
+Comparing concurrency scaling and write invalidation profiles at 1,000 tenants:
+
+| Metric / Scenario | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 |
+|---|---|---|---|---|
+| **Hit Ratio (All Cells)** | N/A | **100.0%** | **100.0%** | **100.0%** (1..500t) / **99.7%** (1,000t) |
+| **Single-Client Latency** | 10.5–11.5 ms | **5.53 ms** (2.0× faster) | **5.15 ms** (2.1× faster) | **5.55 ms** (2.1× faster) |
+| **8 Clients Latency (Read)** | 35.4–38.1 ms | **14.62 ms** (+142%) | **15.34 ms** (+149%) | **14.90 ms** (+145%) |
+| **Max Throughput (32 clients)** | 297–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) |
+| **Writes Resilience (5% w, 1 wt)** | 239–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) |
+| **Writes Resilience (10% w, 1000 wt)** | 251–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) |
+
+---
+
+## 4. Key Findings
 
 1. **Unbroken 100.0% Cache Hit Ratio Across 2,000 Tenants**:
    Every single version tested (0.6.3, 0.6.4, 0.7.0) achieved a perfect **100.0% cache hit ratio** across all tenant tiers up to 2,000 active tenants. Expanding the multi-tenant key space by 2,000× did not exhaust cache capacity or induce cache thrashing.
@@ -62,7 +79,7 @@ Sweep 1 evaluated key-space explosion as active tenants scaled from 1 to 2,000 t
 
 ---
 
-## 4. Directory Layout by Tag
+## 5. Directory Layout by Tag
 
 - [`0.6.3/`](0.6.3/): Full results, TSV, and raw outputs for tag `0.6.3`.
 - [`0.6.4/`](0.6.4/): Full results, TSV, and raw outputs for tag `0.6.4`.
