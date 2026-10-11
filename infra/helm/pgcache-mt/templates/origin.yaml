@@ -38,8 +38,8 @@ spec:
             - labelSelector:
                 matchExpressions:
                   - key: lab/role
-                    operator: NotIn
-                    values: [origin]
+                    operator: In
+                    values: [pgcache, loadgen]
               topologyKey: kubernetes.io/hostname
       {{- end }}
       containers:

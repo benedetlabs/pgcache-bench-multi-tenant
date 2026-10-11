@@ -1,65 +1,87 @@
-# Verificação do PgCache Benchmark — Versão 0.6.4
+# Verificação de Benchmark PgCache — Tag 0.6.4
 
 > 🇺🇸 **[English version](README.md)**
 
-Execução de verificação para o **PgCache v0.6.4** (`pgcache/pgcache:0.6.4-arm64` / `pgcache/pgcache:0.6.4`) executada no ambiente Docker local em uma escala de 1.000 tenants seguindo o protocolo do benchmark.
+Execução de verificação para **PgCache v0.6.4** (`pgcache/pgcache:0.6.4`) no DigitalOcean Kubernetes (DOKS) em 1, 10, 50, 100, 500, 1.000 e 2.000 tenants seguindo o protocolo do benchmark.
 
 ## 1. Resumo
 
-- **Taxa de Acerto (Hit Ratio)**: **100,0%** em todos os tenants (1..1.000), níveis de concorrência e proporções de escrita.
-- **Linha de Base com 1 Cliente**: **2,05× mais rápido** (5,15 ms vs 10,55 ms) sem filas.
-- **Ganho Máximo em Saturação**: **+141% a +149%** com 8–16 clientes e **+144%** com 32 clientes (42,81 ms vs 104,07 ms, 748 rps).
-- **Resiliência a Escritas**: Manteve ganho de vazão de **+135% a +146%** sob escritas concorrentes distribuídas em 1.000 tenants.
+- **Hit Ratio**: **100,0%** em todas as faixas de tenants (de 1 a 2.000 tenants).
+- **Escala de Espaço de Chaves**: De 1 tenant a 2.000 tenants, o PgCache manteve latências entre 15,5 ms e 20,9 ms, atingindo **515 rps** com 2.000 tenants contra 308 rps na origem (+67% de ganho).
+- **Passos de Aquecimento**: Estabilizou em 2 passos (60s) para 1–100 tenants, 3 passos (90s) para 500–1.000 tenants e 4 passos (120s) para 2.000 tenants.
+- **Ganho de Vazão**: Entregou consistentemente **+33% a +90% de ganho de vazão** em todas as contagens de tenants.
+- **Ambiente**: Cluster DigitalOcean Kubernetes com 3 nós (`s-4vcpu-8gb`, região sfo3) com `podAntiAffinity` estrito e `hostNetwork: true`.
 
 ---
 
-## 2. Varredura 1 — Varredura por Quantidade de Tenants
+## 2. Detalhes de Infraestrutura e Recursos
 
-Avaliando a dispersão do espaço de chaves em 1, 10, 50, 200, 500 e 1.000 tenants ativos (concorrência fixa em 8 clientes):
-
-| Tenants Ativos | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
-|---:|---|---|---:|---:|---:|
-| 1 | 34,6 ms · 231 rps | 13,24 ms · 604 rps | +161% | 100,0% | 2 |
-| 10 | 33,5 ms · 239 rps | 15,09 ms · 530 rps | +122% | 100,0% | 2 |
-| 50 | 34,9 ms · 229 rps | 14,00 ms · 572 rps | +150% | 100,0% | 3 |
-| 200 | 33,2 ms · 241 rps | 14,00 ms · 572 rps | +137% | 100,0% | 3 |
-| 500 | 33,7 ms · 238 rps | 14,31 ms · 559 rps | +135% | 100,0% | 4 |
-| 1000 | 33,6 ms · 238 rps | 14,52 ms · 551 rps | +132% | 100,0% | 5 |
+| Componente | Especificação |
+|---|---|
+| **Provedor Cloud** | DigitalOcean Kubernetes (DOKS) |
+| **Região / Topologia** | `sfo3` (single-AZ, todos os 3 nós na mesma zona) |
+| **Nós do Cluster** | 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM cada) |
+| **Control Plane** | `--ha=false` (custo de control plane a $0) |
+| **SO do Nó / Runtime** | Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3 |
+| **Storage Class** | `do-block-storage` (`dobs.csi.digitalocean.com`) |
+| **Distribuição de Pods** | `podAntiAffinity` estrito (1 nó exclusivo para cada: `origin`, `pgcache`, `loadgen`) |
+| **Rede** | `hostNetwork: true` (roteamento IP direto do nó, eliminando NAT de overlay) |
+| **Pod Origin** | PostgreSQL 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB` |
+| **Pod PgCache** | PgCache 0.6.4 (`pgcache/pgcache:0.6.4`), requests: 2500m CPU / 5Gi RAM, `workers=4`, `metricsPort=9091` |
+| **Pod Loadgen** | PostgreSQL 17 (`postgres:17` com pgbench), requests: 2500m CPU / 2Gi RAM |
+| **Pod Metrics Reader** | Alpine 3.20 (`alpine:3.20`), requests: 50m CPU / 64Mi RAM |
+| **Tamanho da Base** | 500k pedidos, 2M itens (~594 MB total), 2.000 tenants (250 pedidos/tenant) |
 
 ---
 
-## 3. Varredura 2 — Concorrência de Clientes
+## 3. Sweep 1 — Varredura de Tenants (DigitalOcean DOKS)
 
-Separando o ganho puro do cache da saturação da origem (1.000 tenants):
+Avaliando a expansão do espaço de consultas em 1, 10, 50, 100, 500, 1.000 e 2.000 tenants ativos (concorrência fixa em 8 clientes, duração de 30s, aquecimento dinâmico):
 
-| Clientes | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
+| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.4 (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
 |---:|---|---|---:|---:|---:|
-| 1 | 10,5 ms · 95 rps | 5,15 ms · 194 rps | +104% | 100,0% | 2 |
-| 4 | 18,8 ms · 213 rps | 10,51 ms · 381 rps | +79% | 100,0% | 2 |
+| 1 | 27,1 ms · 295 rps | 16,8 ms · 476 rps | +61% | 100,0% | 2 |
+| 10 | 27,7 ms · 288 rps | 21,0 ms · 382 rps | +33% | 100,0% | 2 |
+| 50 | 29,9 ms · 267 rps | 15,8 ms · 506 rps | +90% | 100,0% | 2 |
+| 100 | 25,2 ms · 317 rps | 16,3 ms · 492 rps | +55% | 100,0% | 2 |
+| 500 | 26,9 ms · 298 rps | 15,7 ms · 510 rps | +71% | 100,0% | 3 |
+| 1.000 | 24,5 ms · 326 rps | 16,8 ms · 476 rps | +46% | 100,0% | 3 |
+| 2.000 | 26,0 ms · 308 rps | 15,5 ms · 515 rps | +67% | 100,0% | 4 |
+
+---
+
+## 4. Sweep 2 — Concorrência de Clientes (Linha de Base)
+
+Separando velocidade pura do cache de leitura da saturação da origem (escala de clientes com 1.000 tenants):
+
+| Clientes | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
+|---:|---|---|---:|---:|---:|
+| 1 | 10,9 ms · 92 rps | 5,15 ms · 194 rps | +111% | 100,0% | 2 |
+| 4 | 19,8 ms · 202 rps | 8,88 ms · 451 rps | +123% | 100,0% | 2 |
 | 8 | 38,1 ms · 210 rps | 15,34 ms · 522 rps | +149% | 100,0% | 2 |
-| 16 | 61,6 ms · 260 rps | 25,54 ms · 627 rps | +141% | 100,0% | 2 |
-| 32 | 104,1 ms · 307 rps | 42,81 ms · 748 rps | +144% | 100,0% | 2 |
+| 16 | 58,3 ms · 275 rps | 24,96 ms · 641 rps | +133% | 100,0% | 2 |
+| 32 | 104,2 ms · 307 rps | 42,81 ms · 748 rps | +144% | 100,0% | 2 |
 
 ---
 
-## 4. Varredura 3 — Taxa de Escrita e Concentração
+## 5. Sweep 3 — Taxa de Escritas e Concentração (Linha de Base)
 
-Testando a resiliência à invalidação de cache com leitura e escrita misturadas (8 clientes, 1.000 tenants):
+Testando a resiliência à invalidação de cache com carga mista (8 clientes, 1.000 tenants):
 
-| Escritas | Tenants de Escrita | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
-|---:|---|---|---|---:|---:|---:|
-| 0% | 1000 | 34,3 ms · 233 rps | 13,86 ms · 577 rps | +148% | 100,0% | 2 |
-| 5% | 1 | 32,1 ms · 249 rps | 13,38 ms · 598 rps | +140% | 100,0% | 2 |
-| 5% | 10 | 32,3 ms · 248 rps | 13,10 ms · 611 rps | +146% | 100,0% | 2 |
-| 5% | 1000 | 32,7 ms · 245 rps | 13,31 ms · 601 rps | +145% | 100,0% | 2 |
-| 10% | 1 | 30,1 ms · 265 rps | 12,47 ms · 642 rps | +142% | 100,0% | 2 |
-| 10% | 1000 | 29,8 ms · 268 rps | 12,67 ms · 631 rps | +135% | 100,0% | 2 |
+| Escritas | Tenants de Escrita | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
+|---:|---:|---|---|---:|---:|---:|
+| 0% | 1000 | 36,0 ms · 222 rps | 15,12 ms · 529 rps | +138% | 100,0% | 2 |
+| 5% | 1 | 32,7 ms · 244 rps | 13,63 ms · 587 rps | +141% | 100,0% | 2 |
+| 5% | 10 | 32,3 ms · 247 rps | 13,75 ms · 582 rps | +136% | 100,0% | 2 |
+| 5% | 1000 | 32,7 ms · 245 rps | 13,39 ms · 598 rps | +144% | 100,0% | 2 |
+| 10% | 1 | 32,1 ms · 249 rps | 12,72 ms · 629 rps | +153% | 100,0% | 2 |
+| 10% | 1000 | 30,6 ms · 261 rps | 12,67 ms · 631 rps | +142% | 100,0% | 2 |
 
 ---
 
-## 5. Artefatos Brutos
+## 6. Artefatos Brutos
 
-- Dados tabulares legíveis por máquina: [`results.tsv`](results.tsv)
-- Log bruto da varredura de tenants: [`run-tenants.txt`](run-tenants.txt)
-- Log bruto da varredura de clientes: [`run-clients.txt`](run-clients.txt)
-- Log bruto da varredura de escrita: [`run-writes.txt`](run-writes.txt)
+- Dados legíveis por máquina: [`results.tsv`](results.tsv)
+- Log bruto do sweep de tenants (DOKS): [`run-tenants.txt`](run-tenants.txt)
+- Log bruto de concorrência: [`run-clients.txt`](run-clients.txt)
+- Log bruto de escritas: [`run-writes.txt`](run-writes.txt)

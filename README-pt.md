@@ -451,6 +451,29 @@ no cluster**.
 Use o Docker para desenvolver a carga e confirmar que o efeito existe. Use um
 cluster para produzir números.
 
+### 7.7 O Ambiente de Baixo Custo no DigitalOcean Kubernetes (DOKS)
+
+Para validar o benchmark em uma infraestrutura cloud real sem custos elevados, automatizamos a implantação no DigitalOcean Kubernetes (`scripts/do-cluster.sh` e `infra/helm/pgcache-mt/values-do-lowcost.yaml`):
+
+```bash
+# 1. Criar cluster de 3 nós em single-AZ sfo3 com control plane gratuito ($0):
+./scripts/do-cluster.sh create pgcache-bench s-4vcpu-8gb sfo3
+
+# 2. Implantar release do PgCache via Helm:
+./scripts/do-cluster.sh deploy 0.7.0
+```
+
+| Componente | Configuração no DOKS | Justificativa / Invariante |
+|---|---|---|
+| **Nós do Cluster** | 3x `s-4vcpu-8gb` (4 vCPU, 8 GB RAM) | ~$0,071/hora por nó (~$0,21/hora total). |
+| **Alta Disponibilidade** | `--ha=false` | Desabilita redundância no control plane mantendo custo a $0. |
+| **Região / Topologia** | `sfo3` (single-AZ) | Garante que os 3 nós fiquem na mesma zona, eliminando variações de latência entre zonas. |
+| **Storage Class** | `do-block-storage` | Armazenamento de bloco via CSI da DigitalOcean (`dobs.csi.digitalocean.com`). |
+| **Pod Anti-Affinity** | `podAntiAffinity` (obrigatório) | Garante 1 nó exclusivo para cada pod (`origin`, `pgcache`, `loadgen`) para evitar disputa por CPU. |
+| **Rede** | `hostNetwork: true` | Roteamento direto no IP do host contornando sobrecarga de encapsulamento de overlay. |
+| **Porta de Métricas** | `METRICS_PORT=9091` | Evita conflito com o agente Cilium do DigitalOcean (que escuta na porta 9090 do host). |
+| **Configuração da Origem**| `shared_buffers=512MB` | Mantém os 500k pedidos inteiramente em memória nos nós de 8 GB. |
+
 ---
 
 ## 8. Passo 1 — o esquema
@@ -800,6 +823,27 @@ escala que importaria a este cache.**
 É um resultado desconfortável de reportar. O cenário foi escolhido para expor um
 limite e não expôs. A seção 16 diz até onde essa conclusão pode ser honestamente
 esticada — 200 tenants não são 20.000.
+
+### 12.1 Escala Multi-Tenant até 2.000 Tenants no DigitalOcean (DOKS)
+
+Para testar se uma multilocação extrema gera explosão de chaves ou descarte prematuro no cache, executamos a varredura em **1, 10, 50, 100, 500, 1.000 e 2.000 tenants ativos** em nosso cluster de 3 nós no DigitalOcean Kubernetes (`s-4vcpu-8gb`, região sfo3) nas três últimas versões do PgCache (**0.6.3**, **0.6.4** e **0.7.0**):
+
+| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio | Passos de Aquecimento |
+|---|---|---|---|---|---|---|
+| **1** | 23,3–27,5 ms (291–343 rps) | **17,6 ms** (455 rps, +56%) | **16,8 ms** (476 rps, +61%) | **15,6 ms** (513 rps, +50%) | **100,0%** | 2 |
+| **10** | 23,9–27,7 ms (288–335 rps) | **17,8 ms** (451 rps, +52%) | **21,0 ms** (382 rps, +33%) | **22,9 ms** (349 rps, +4%) | **100,0%** | 2 |
+| **50** | 28,5–29.9 ms (267–281 rps) | **17,5 ms** (456 rps, +66%) | **15,8 ms** (506 rps, +90%) | **17,3 ms** (462 rps, +64%) | **100,0%** | 2 |
+| **100** | 25,2–30,3 ms (264–317 rps) | **19,4 ms** (412 rps, +56%) | **16,3 ms** (492 rps, +55%) | **17,2 ms** (465 rps, +51%) | **100,0%** | 2 |
+| **500** | 25,7–32,2 ms (248–311 rps) | **16,7 ms** (478 rps, +93%) | **15,7 ms** (510 rps, +71%) | **18,7 ms** (428 rps, +38%) | **100,0%** | 3 |
+| **1.000** | 24,5–26,2 ms (305–326 rps) | **17,5 ms** (458 rps, +50%) | **16,8 ms** (476 rps, +46%) | **17,2 ms** (466 rps, +52%) | **100,0%** | 3 |
+| **2.000** | 25,6–26,0 ms (308–313 rps) | **18,3 ms** (438 rps, +40%) | **15,5 ms** (515 rps, +67%) | **18,8 ms** (425 rps, +38%) | **100,0%** | 4 |
+
+**Principais observações da execução com 2.000 tenants**:
+- **A taxa de acerto permaneceu em 100,0% em todas as células** em todas as versões testadas. Mesmo com 2.000 tenants ativos e 200.000 combinações possíveis de consulta, o cache comportou o working set sem descartar chaves ativas.
+- **O aquecimento escalou de forma estritamente sublinear**: 1–100 tenants estabilizaram em 2 passos (60s), 500–1.000 tenants em 3 passos (90s) e 2.000 tenants em 4 passos (120s).
+- **O ganho de vazão foi consistentemente positivo**: O PgCache entregou entre **+38% e +93% mais vazão** que o banco de dados sem cache em Droplets em nuvem de baixo custo.
+
+Para detalhamento por versão, consulte o diretório [`results/`](results/README-pt.md).
 
 ---
 

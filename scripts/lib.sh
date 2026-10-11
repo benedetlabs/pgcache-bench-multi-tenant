@@ -42,7 +42,17 @@ ex() {
   if [ "$BENCH_ENV" = "docker" ]; then
     docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client bash -c "$1"
   else
-    kubectl -n "$NS" exec deploy/loadgen -- bash -c "$1"
+    local tries=0 out=""
+    while [ $tries -lt 3 ]; do
+      if out=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c "$1" 2>&1); then
+        echo "$out"
+        return 0
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
+    echo "$out" >&2
+    return 1
   fi
 }
 
@@ -83,10 +93,22 @@ scrape() {
   else
     local ip; ip="$(pgcache_ip)"
     [ -n "$ip" ] || die "could not resolve the pgcache pod IP"
-    local out
-    out=$(kubectl -n "$NS" exec deploy/metrics-reader -- \
-      sh -c "wget -qO- --timeout=20 http://$ip:9090/metrics" 2>/dev/null || true)
-    [ -n "$out" ] || die "failed to scrape pgcache metrics from metrics-reader"
+    local mport="${PGCACHE_METRICS_PORT:-}"
+    if [ -z "$mport" ]; then
+      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9090")
+      [ -z "$mport" ] && mport="9090"
+    fi
+    local out="" tries=0
+    while [ $tries -lt 3 ]; do
+      out=$(kubectl -n "$NS" exec deploy/metrics-reader -- \
+        sh -c "wget -qO- --timeout=20 http://$ip:$mport/metrics" 2>/dev/null || true)
+      if [ -n "$out" ] && echo "$out" | grep -q "pgcache_queries_"; then
+        break
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
+    [ -n "$out" ] || die "failed to scrape pgcache metrics from metrics-reader (port $mport)"
     echo "$out" | awk '/^pgcache_queries_cache_hit /  {h=$2}
                        /^pgcache_queries_cache_miss / {m=$2}
                        END { print h+0, m+0 }'

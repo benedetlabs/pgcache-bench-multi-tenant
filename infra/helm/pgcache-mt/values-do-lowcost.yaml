@@ -57,7 +57,7 @@ pgcache:
   telemetry: "off"
   workers: 4
   listenPort: 6432
-  metricsPort: 9090
+  metricsPort: 9091
   resources:
     requests:
       cpu: "2500m"

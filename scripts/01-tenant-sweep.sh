@@ -11,7 +11,7 @@
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 header tenants
-TENANTS_LIST="${TENANTS_LIST:-1 10 50 200}"
+TENANTS_LIST="${TENANTS_LIST:-1 10 50 100 500 1000 2000}"
 for T in $TENANTS_LIST; do
   cell "$T" -f /tmp/mt/dashboard.sql -D tenants=$T
 done
