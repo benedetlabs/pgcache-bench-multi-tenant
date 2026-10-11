@@ -1,63 +1,65 @@
-# Verificação do Benchmark PgCache — Versão 0.6.3
+# Verificação do PgCache Benchmark — Versão 0.6.3
 
 > 🇺🇸 **[English version](README.md)**
 
-Execução de verificação para o **PgCache v0.6.3** (`pgcache/pgcache:0.6.3-arm64` / `pgcache/pgcache:0.6.3`) realizada em ambiente local Docker seguindo o protocolo do benchmark.
+Execução de verificação para o **PgCache v0.6.3** (`pgcache/pgcache:0.6.3-arm64` / `pgcache/pgcache:0.6.3`) executada no ambiente Docker local em uma escala de 1.000 tenants seguindo o protocolo do benchmark.
 
 ## 1. Resumo
 
-- **Taxa de Acerto (Hit Ratio)**: **100,0%** em todas as contagens de tenants, níveis de concorrência e proporções de escrita.
-- **Linha de Base com Cliente Único**: **7,37× mais rápido** (3,36 ms vs 24,77 ms) sem qualquer enfileiramento.
-- **Ganho Máximo na Saturação**: **+1299%** com 32 clientes concorrentes (23,34 ms vs 327,39 ms).
-- **Resiliência a Escrita**: Manteve **+706% de ganho de vazão** mesmo sob 10% de escritas distribuídas por todos os 200 tenants.
+- **Taxa de Acerto (Hit Ratio)**: **100,0%** em todos os tenants (1..1.000), níveis de concorrência e proporções de escrita.
+- **Linha de Base com 1 Cliente**: **2,04× mais rápido** (5,53 ms vs 11,25 ms) sem filas.
+- **Ganho Máximo em Saturação**: **+140% a +142%** com 8–16 clientes e **+138%** com 32 clientes (45,02 ms vs 107,17 ms, 711 rps).
+- **Resiliência a Escritas**: Manteve ganho de vazão estável de **+137% a +141%** mesmo sob 10% de escritas distribuídas em 1.000 tenants.
 
 ---
 
-## 2. Varredura 1 — Varredura de Contagem de Tenants
+## 2. Varredura 1 — Varredura por Quantidade de Tenants
 
-Avaliação da expansão do espaço de consultas entre 1, 10, 50 e 200 tenants ativos (concorrência fixada em 8 clientes):
+Avaliando a dispersão do espaço de chaves em 1, 10, 50, 200, 500 e 1.000 tenants ativos (concorrência fixa em 8 clientes):
 
 | Tenants Ativos | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
 |---:|---|---|---:|---:|---:|
-| 1 | 88,3 ms · 91 rps | 7,55 ms · 1.060 rps | +1065% | 100,0% | 2 |
-| 10 | 83,9 ms · 95 rps | 7,86 ms · 1.017 rps | +971% | 100,0% | 2 |
-| 50 | 84,5 ms · 95 rps | 8,03 ms · 997 rps | +949% | 100,0% | 2 |
-| 200 | 88,5 ms · 90 rps | 8,13 ms · 984 rps | +993% | 100,0% | 2 |
+| 1 | 33,9 ms · 236 rps | 13,42 ms · 596 rps | +153% | 100,0% | 2 |
+| 10 | 32,6 ms · 246 rps | 13,57 ms · 590 rps | +140% | 100,0% | 2 |
+| 50 | 33,7 ms · 237 rps | 13,84 ms · 578 rps | +144% | 100,0% | 3 |
+| 200 | 34,6 ms · 231 rps | 14,05 ms · 570 rps | +147% | 100,0% | 3 |
+| 500 | 34,6 ms · 231 rps | 14,22 ms · 563 rps | +144% | 100,0% | 4 |
+| 1000 | 34,7 ms · 230 rps | 14,31 ms · 559 rps | +143% | 100,0% | 5 |
 
 ---
 
-## 3. Varredura 2 — Varredura de Concorrência de Clientes
+## 3. Varredura 2 — Concorrência de Clientes
 
-Separando o ganho exclusivo de cache da saturação do banco de origem (200 tenants):
+Separando o ganho puro do cache da saturação da origem (1.000 tenants):
 
 | Clientes | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
 |---:|---|---|---:|---:|---:|
-| 1 | 24,8 ms · 40 rps | 3,36 ms · 298 rps | +645% | 100,0% | 2 |
-| 4 | 49,2 ms · 81 rps | 4,91 ms · 814 rps | +905% | 100,0% | 2 |
-| 8 | 86,7 ms · 92 rps | 7,68 ms · 1.041 rps | +1032% | 100,0% | 2 |
-| 16 | 160,2 ms · 100 rps | 12,64 ms · 1.266 rps | +1166% | 100,0% | 2 |
-| 32 | 327,4 ms · 98 rps | 23,34 ms · 1.371 rps | +1299% | 100,0% | 2 |
+| 1 | 11,2 ms · 89 rps | 5,53 ms · 181 rps | +103% | 100,0% | 2 |
+| 4 | 19,2 ms · 208 rps | 8,79 ms · 455 rps | +119% | 100,0% | 2 |
+| 8 | 35,4 ms · 226 rps | 14,62 ms · 547 rps | +142% | 100,0% | 2 |
+| 16 | 60,3 ms · 265 rps | 25,18 ms · 635 rps | +140% | 100,0% | 2 |
+| 32 | 107,2 ms · 299 rps | 45,02 ms · 711 rps | +138% | 100,0% | 2 |
 
 ---
 
-## 4. Varredura 3 — Proporção de Escrita e Concentração
+## 4. Varredura 3 — Taxa de Escrita e Concentração
 
-Testando a resiliência à invalidação do cache sob leituras e escritas mistas (8 clientes, 200 tenants):
+Testando a resiliência à invalidação de cache com leitura e escrita misturadas (8 clientes, 1.000 tenants):
 
 | Escritas | Tenants de Escrita | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passes de Aquecimento |
-|---:|---:|---|---|---:|---:|---:|
-| 0% | 200 | 84,1 ms · 95 rps | 7,69 ms · 1.040 rps | +995% | 100,0% | 2 |
-| 5% | 1 | 84,3 ms · 95 rps | 7,50 ms · 1.066 rps | +1022% | 100,0% | 2 |
-| 5% | 10 | 79,9 ms · 100 rps | 7,77 ms · 1.029 rps | +929% | 100,0% | 2 |
-| 5% | 200 | 84,2 ms · 95 rps | 8,28 ms · 967 rps | +918% | 100,0% | 2 |
-| 10% | 1 | 81,4 ms · 98 rps | 7,62 ms · 1.050 rps | +971% | 100,0% | 2 |
-| 10% | 200 | 79,2 ms · 101 rps | 9,83 ms · 814 rps | +706% | 100,0% | 2 |
+|---:|---|---|---|---:|---:|---:|
+| 0% | 1000 | 35,1 ms · 228 rps | 14,52 ms · 551 rps | +142% | 100,0% | 2 |
+| 5% | 1 | 33,5 ms · 239 rps | 13,92 ms · 575 rps | +141% | 100,0% | 2 |
+| 5% | 10 | 33,3 ms · 240 rps | 14,03 ms · 570 rps | +138% | 100,0% | 2 |
+| 5% | 1000 | 33,2 ms · 241 rps | 13,93 ms · 574 rps | +138% | 100,0% | 2 |
+| 10% | 1 | 31,4 ms · 254 rps | 13,28 ms · 603 rps | +137% | 100,0% | 2 |
+| 10% | 1000 | 31,9 ms · 251 rps | 13,27 ms · 603 rps | +140% | 100,0% | 2 |
 
 ---
 
 ## 5. Artefatos Brutos
 
-- Dados legíveis por máquina: [`results.tsv`](results.tsv)
+- Dados tabulares legíveis por máquina: [`results.tsv`](results.tsv)
 - Log bruto da varredura de tenants: [`run-tenants.txt`](run-tenants.txt)
-- Log bruto da varredura de concorrência: [`run-clients.txt`](run-clients.txt)
-- Log bruto da varredura de escritas: [`run-writes.txt`](run-writes.txt)
+- Log bruto da varredura de clientes: [`run-clients.txt`](run-clients.txt)
+- Log bruto da varredura de escrita: [`run-writes.txt`](run-writes.txt)
