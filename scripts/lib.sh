@@ -22,11 +22,29 @@ CLIENTS="${CLIENTS:-8}"
 THREADS="${THREADS:-4}"
 DURATION="${DURATION:-30}"
 
+BENCH_ENV="${BENCH_ENV:-${TARGET_ENV:-}}"
+if [ -z "$BENCH_ENV" ]; then
+  if [ "${DOCKER:-0}" = "1" ] || [ "${USE_DOCKER:-0}" = "1" ]; then
+    BENCH_ENV="docker"
+  else
+    BENCH_ENV="k8s"
+  fi
+fi
+
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+
 # Fail loudly rather than silently producing a table of zeroes.
 die() { echo "FATAL: $*" >&2; exit 1; }
 
-# Run a command inside the loadgen pod.
-ex() { kubectl -n "$NS" exec deploy/loadgen -- bash -c "$1"; }
+# Run a command inside the loadgen pod or client container.
+ex() {
+  if [ "$BENCH_ENV" = "docker" ]; then
+    docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client bash -c "$1"
+  else
+    kubectl -n "$NS" exec deploy/loadgen -- bash -c "$1"
+  fi
+}
 
 # ── Metrics ────────────────────────────────────────────────────────────────
 #
@@ -44,13 +62,35 @@ pgcache_ip() {
 # Counters are cumulative since the PgCache process started, so callers take a
 # DELTA around the measured window rather than reading them absolutely.
 scrape() {
-  local ip; ip="$(pgcache_ip)"
-  [ -n "$ip" ] || die "could not resolve the pgcache pod IP"
-  kubectl -n "$NS" exec deploy/metrics-reader -- \
-    sh -c "wget -qO- --timeout=20 http://$ip:9090/metrics" 2>/dev/null \
-  | awk '/^pgcache_queries_cache_hit /  {h=$2}
-         /^pgcache_queries_cache_miss / {m=$2}
-         END { print h+0, m+0 }'
+  if [ "$BENCH_ENV" = "docker" ]; then
+    if curl -sf --connect-timeout 5 http://127.0.0.1:59090/metrics >/tmp/metrics.scrape.$$ 2>/dev/null && grep -q "pgcache_queries_" /tmp/metrics.scrape.$$; then
+      awk '/^pgcache_queries_cache_hit /  {h=$2}
+           /^pgcache_queries_cache_miss / {m=$2}
+           END { print h+0, m+0 }' /tmp/metrics.scrape.$$
+      rm -f /tmp/metrics.scrape.$$
+    else
+      local out
+      out=$(docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T metrics-reader \
+        sh -c "wget -qO- --timeout=20 http://pgcache:9090/metrics" 2>/dev/null || true)
+      if [ -n "$out" ] && echo "$out" | grep -q "pgcache_queries_"; then
+        echo "$out" | awk '/^pgcache_queries_cache_hit /  {h=$2}
+                           /^pgcache_queries_cache_miss / {m=$2}
+                           END { print h+0, m+0 }'
+      else
+        die "could not scrape pgcache metrics in docker"
+      fi
+    fi
+  else
+    local ip; ip="$(pgcache_ip)"
+    [ -n "$ip" ] || die "could not resolve the pgcache pod IP"
+    local out
+    out=$(kubectl -n "$NS" exec deploy/metrics-reader -- \
+      sh -c "wget -qO- --timeout=20 http://$ip:9090/metrics" 2>/dev/null || true)
+    [ -n "$out" ] || die "failed to scrape pgcache metrics from metrics-reader"
+    echo "$out" | awk '/^pgcache_queries_cache_hit /  {h=$2}
+                       /^pgcache_queries_cache_miss / {m=$2}
+                       END { print h+0, m+0 }'
+  fi
 }
 
 # ── Load ───────────────────────────────────────────────────────────────────
@@ -65,8 +105,10 @@ scrape() {
 # to be forced on the cached path only.
 run() {
   local host="$1" port="$2" secs="$3"; shift 3
+  local threads=$THREADS
+  [ "$threads" -gt "$CLIENTS" ] && threads="$CLIENTS"
   local out
-  out=$(ex "pgbench -h $host -p $port -U \$PGUSER -n -c $CLIENTS -j $THREADS -T $secs $* \$PGDATABASE" 2>&1) \
+  out=$(ex "pgbench -h $host -p $port -U \$PGUSER -n -c $CLIENTS -j $threads -T $secs $* \$PGDATABASE" 2>&1) \
     || die "pgbench failed: $(echo "$out" | tail -3)"
   echo "$out" | awk '/^latency average/{l=$4} /^tps/{printf "%s %.0f", l, $3}'
 }

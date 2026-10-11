@@ -1,0 +1,90 @@
+# Default values for pgcache-mt.
+# This chart deploys the 3-role multi-tenant benchmark architecture:
+# origin (PostgreSQL 17), pgcache (read proxy), loadgen (pgbench client), and metrics-reader.
+
+# Global settings
+affinity:
+  # In production benchmark clusters, anti-affinity enforces 3 separate nodes.
+  # For local/single-node clusters (Docker Desktop / kind / k3d), set enabled to false.
+  enabled: true
+
+hostNetwork:
+  # Direct node IP bypasses kube-proxy and overlay latency.
+  # If the cluster forbids hostNetwork via Pod Security admission, set to false.
+  enabled: true
+
+# Image definitions
+image:
+  origin:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  pgcache:
+    repository: pgcache/pgcache
+    tag: "0.7.0"
+    pullPolicy: IfNotPresent
+  loadgen:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  metricsReader:
+    repository: alpine
+    tag: "3.20"
+    pullPolicy: IfNotPresent
+
+# Origin PostgreSQL configuration
+origin:
+  database: bench
+  user: bench
+  password: benchpass
+  sharedBuffers: "1GB"
+  maxConnections: 500
+  workMem: "32MB"
+  maintenanceWorkMem: "512MB"
+  randomPageCost: "1.1"
+  resources:
+    requests:
+      cpu: "6"
+      memory: "20Gi"
+  storage:
+    size: 64Gi
+    storageClassName: ""
+
+# PgCache configuration
+pgcache:
+  # Safe table list. Can be a YAML list or a comma-separated string.
+  # Templating automatically converts lists to comma-separated strings to avoid
+  # the 'helm --set' comma-splitting issue.
+  allowedTables:
+    - product
+    - category
+    - seller
+    - customer
+    - orders
+    - order_item
+    - review
+  telemetry: "off"
+  workers: 4
+  listenPort: 6432
+  metricsPort: 9090
+  resources:
+    requests:
+      cpu: "6"
+      memory: "24Gi"
+
+# Load generator pod
+loadgen:
+  resources:
+    requests:
+      cpu: "6"
+      memory: "8Gi"
+  storage:
+    size: 20Gi
+    storageClassName: ""
+
+# Metrics reader pod (for Prometheus scrape over HTTP)
+metricsReader:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"

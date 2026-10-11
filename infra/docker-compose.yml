@@ -38,11 +38,13 @@ services:
       retries: 40
     volumes: [origin-data:/var/lib/postgresql/data]
     ports: ["55432:5432"]
+    shm_size: 2gb
 
   pgcache:
-    image: pgcache/pgcache:latest
+    image: ${PGCACHE_IMAGE:-pgcache/pgcache:0.7.0-arm64}
     depends_on:
       origin: {condition: service_healthy}
+    shm_size: 2gb
     environment:
       UPSTREAM_URL: postgres://bench:benchpass@origin:5432/bench
       LISTEN_PORT: "6432"
@@ -72,6 +74,10 @@ services:
     volumes:
       - ../sql:/sql:ro
       - ../workload:/tmp/mt:ro
+    entrypoint: ["sleep", "infinity"]
+
+  metrics-reader:
+    image: alpine:3.20
     entrypoint: ["sleep", "infinity"]
 
 volumes:

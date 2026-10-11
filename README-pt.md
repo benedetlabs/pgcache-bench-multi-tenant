@@ -98,6 +98,40 @@ Há também um setup para laptop em [`infra/docker-compose.yml`](infra/docker-co
 Ele reproduz a *forma* dos resultados, mas não as magnitudes — a seção 7.6
 explica por quê, e isso importa mais do que parece.
 
+### Deploy com Helm
+
+Você pode fazer o deploy no Kubernetes ou Docker Desktop usando o Helm chart em [`infra/helm/pgcache-mt`](infra/helm/pgcache-mt/) ou com o utilitário [`scripts/helm-deploy.sh`](scripts/helm-deploy.sh):
+
+```bash
+# Cluster Kubernetes de produção (3 nós dedicados):
+helm install pgcache-mt infra/helm/pgcache-mt \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0"
+
+# Clusters de produção ARM64 (ex: AWS Graviton):
+helm install pgcache-mt infra/helm/pgcache-mt \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0-arm64"
+
+# Kubernetes local no Docker (Docker Desktop / kind / k3d):
+./scripts/helm-deploy.sh --docker 0.7.0-arm64
+# Ou manualmente com Helm:
+helm install pgcache-mt infra/helm/pgcache-mt \
+  -f infra/helm/pgcache-mt/values-docker.yaml \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0-arm64"
+```
+
+### Resultados de múltiplas versões e verificação local no Docker
+
+Os resultados de verificação do benchmark estruturados por tag de versão (`0.6.3`, `0.6.4` e `0.7.0`) estão disponíveis na pasta [`results/`](results/) com relatórios dedicados em inglês e português.
+
+Para rodar a verificação local no Docker para qualquer tag:
+
+```bash
+./scripts/run-tag-verification.sh 0.7.0 5
+```
+
 ---
 
 ## 3. A pergunta
@@ -1026,6 +1060,8 @@ pgcache-multi-tenant/
 │   │   ├── 02-pgcache.yaml          o cache, cada variável explicada
 │   │   ├── 03-loadgen.yaml          pgbench + volume de resultados
 │   │   └── 04-metrics-reader.yaml   o pod que consegue ler as métricas
+│   ├── helm/
+│   │   └── pgcache-mt/              Helm chart para deploy no Kubernetes
 │   └── docker-compose.yml           setup de laptop (forma, não magnitudes)
 ├── sql/
 │   ├── 01-schema.sql                7 tabelas, seed, índices estilo ORM
@@ -1038,9 +1074,16 @@ pgcache-multi-tenant/
 │   ├── 00-setup.sh                  aplica o esquema, copia a carga para o pod
 │   ├── 01-tenant-sweep.sh
 │   ├── 02-concurrency-sweep.sh
-│   └── 03-write-sweep.sh
-└── data/
-    └── results.tsv                  as 15 células, legível por máquina
+│   ├── 03-write-sweep.sh
+│   └── run-tag-verification.sh      script automatizado de verificação por tag
+├── data/
+│   └── results.tsv                  as 15 células, legível por máquina
+└── results/                         resultados por versão/tag
+    ├── README.md                    comparação entre versões (inglês)
+    ├── README-pt.md                 comparação entre versões (português)
+    ├── 0.6.3/                       resultados para PgCache 0.6.3
+    ├── 0.6.4/                       resultados para PgCache 0.6.4
+    └── 0.7.0/                       resultados para PgCache 0.7.0
 ```
 
 ### Uma nota sobre os scripts

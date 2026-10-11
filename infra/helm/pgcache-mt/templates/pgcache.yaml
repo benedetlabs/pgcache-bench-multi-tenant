@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgcache
+spec:
+  clusterIP: None
+  selector:
+    app: pgcache
+  ports:
+    - port: {{ .Values.pgcache.listenPort }}
+      targetPort: {{ .Values.pgcache.listenPort }}
+      name: sql
+    - port: {{ .Values.pgcache.metricsPort }}
+      targetPort: {{ .Values.pgcache.metricsPort }}
+      name: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgcache
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pgcache
+  template:
+    metadata:
+      labels:
+        app: pgcache
+        lab/role: pgcache
+    spec:
+      {{- if .Values.hostNetwork.enabled }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      {{- if .Values.affinity.enabled }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: lab/role
+                    operator: NotIn
+                    values: [pgcache]
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+        - name: pgcache
+          image: "{{ .Values.image.pgcache.repository }}:{{ .Values.image.pgcache.tag }}"
+          imagePullPolicy: {{ .Values.image.pgcache.pullPolicy }}
+          env:
+            - name: UPSTREAM_URL
+              value: "postgres://{{ .Values.origin.user }}:{{ .Values.origin.password }}@origin.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.origin.database }}"
+            - name: LISTEN_PORT
+              value: {{ .Values.pgcache.listenPort | quote }}
+            - name: METRICS_PORT
+              value: {{ .Values.pgcache.metricsPort | quote }}
+            - name: NUM_WORKERS
+              value: {{ .Values.pgcache.workers | quote }}
+            - name: ALLOWED_TABLES
+              value: {{ include "pgcache-mt.allowedTables" . | quote }}
+            - name: PGCACHE_TELEMETRY
+              value: {{ .Values.pgcache.telemetry | quote }}
+          ports:
+            - containerPort: {{ .Values.pgcache.listenPort }}
+              name: sql
+            - containerPort: {{ .Values.pgcache.metricsPort }}
+              name: metrics
+          resources:
+            {{- toYaml .Values.pgcache.resources | nindent 12 }}

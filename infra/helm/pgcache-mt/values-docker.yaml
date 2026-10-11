@@ -1,0 +1,69 @@
+# Values optimized for local Docker Kubernetes environments (Docker Desktop, kind, k3d, minikube).
+# Sized specifically to fit within standard local Docker resource limits (e.g. 4 CPUs, 8 GB RAM).
+
+# Disable multi-node anti-affinity so all pods can schedule on a single node
+affinity:
+  enabled: false
+
+# Disable hostNetwork to avoid host port conflicts with local services
+hostNetwork:
+  enabled: false
+
+# Default to ARM64 tag on Apple Silicon / macOS Docker environments
+image:
+  pgcache:
+    tag: "0.7.0-arm64"
+
+# Origin PostgreSQL configuration sized for local containers
+origin:
+  database: bench
+  user: bench
+  password: benchpass
+  sharedBuffers: "512MB"
+  maxConnections: 100
+  workMem: "16MB"
+  maintenanceWorkMem: "128MB"
+  randomPageCost: "1.1"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+  storage:
+    size: 4Gi
+    storageClassName: ""
+
+# PgCache configuration sized for local containers
+pgcache:
+  allowedTables:
+    - product
+    - category
+    - seller
+    - customer
+    - orders
+    - order_item
+    - review
+  telemetry: "off"
+  workers: 2
+  listenPort: 6432
+  metricsPort: 9090
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+
+# Load generator pod sized for local containers
+loadgen:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+  storage:
+    size: 2Gi
+    storageClassName: ""
+
+# Metrics reader pod
+metricsReader:
+  resources:
+    requests:
+      cpu: "20m"
+      memory: "32Mi"

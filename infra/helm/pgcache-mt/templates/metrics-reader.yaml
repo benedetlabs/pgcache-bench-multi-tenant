@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-reader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-reader
+  template:
+    metadata:
+      labels:
+        app: metrics-reader
+    spec:
+      containers:
+        - name: shell
+          image: "{{ .Values.image.metricsReader.repository }}:{{ .Values.image.metricsReader.tag }}"
+          imagePullPolicy: {{ .Values.image.metricsReader.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - "exec sleep infinity"
+          resources:
+            {{- toYaml .Values.metricsReader.resources | nindent 12 }}

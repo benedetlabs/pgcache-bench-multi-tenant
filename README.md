@@ -99,6 +99,40 @@ There is also a laptop setup at [`infra/docker-compose.yml`](infra/docker-compos
 It reproduces the *shape* of the results but not the magnitudes — section 7.6
 explains why, and it matters more than it sounds.
 
+### Helm deployment
+
+You can deploy to Kubernetes or Docker Desktop using the Helm chart in [`infra/helm/pgcache-mt`](infra/helm/pgcache-mt/) or the [`scripts/helm-deploy.sh`](scripts/helm-deploy.sh) helper:
+
+```bash
+# Production 3-node Kubernetes cluster:
+helm install pgcache-mt infra/helm/pgcache-mt \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0"
+
+# ARM64 production clusters (e.g. AWS Graviton):
+helm install pgcache-mt infra/helm/pgcache-mt \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0-arm64"
+
+# Local Docker Kubernetes (Docker Desktop / kind / k3d):
+./scripts/helm-deploy.sh --docker 0.7.0-arm64
+# Or manually with Helm:
+helm install pgcache-mt infra/helm/pgcache-mt \
+  -f infra/helm/pgcache-mt/values-docker.yaml \
+  --namespace pgcache-mt --create-namespace \
+  --set image.pgcache.tag="0.7.0-arm64"
+```
+
+### Multi-version results & local Docker verification
+
+Benchmark verification results structured by release tag (`0.6.3`, `0.6.4`, and `0.7.0`) are available under [`results/`](results/) with dedicated English and Portuguese reports.
+
+To run local verification in Docker for any tag:
+
+```bash
+./scripts/run-tag-verification.sh 0.7.0 5
+```
+
 ---
 
 ## 3. The question
@@ -1012,6 +1046,8 @@ pgcache-multi-tenant/
 │   │   ├── 02-pgcache.yaml          the cache, every variable explained
 │   │   ├── 03-loadgen.yaml          pgbench + results volume
 │   │   └── 04-metrics-reader.yaml   the pod that can scrape metrics
+│   ├── helm/
+│   │   └── pgcache-mt/              Helm chart for Kubernetes deployment
 │   └── docker-compose.yml           laptop setup (shape, not magnitudes)
 ├── sql/
 │   ├── 01-schema.sql                7 tables, seed, ORM-style indexes
@@ -1024,9 +1060,16 @@ pgcache-multi-tenant/
 │   ├── 00-setup.sh                  apply schema, copy workload into the pod
 │   ├── 01-tenant-sweep.sh
 │   ├── 02-concurrency-sweep.sh
-│   └── 03-write-sweep.sh
-└── data/
-    └── results.tsv                  all 15 cells, machine-readable
+│   ├── 03-write-sweep.sh
+│   └── run-tag-verification.sh      automated tag verification runner
+├── data/
+│   └── results.tsv                  all 15 cells, machine-readable
+└── results/                         multi-version results by tag
+    ├── README.md                    cross-version comparison (English)
+    ├── README-pt.md                 cross-version comparison (Portuguese)
+    ├── 0.6.3/                       results for PgCache 0.6.3
+    ├── 0.6.4/                       results for PgCache 0.6.4
+    └── 0.7.0/                       results for PgCache 0.7.0
 ```
 
 ### A note on the scripts
