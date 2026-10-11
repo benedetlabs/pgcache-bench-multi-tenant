@@ -165,12 +165,28 @@ warm_until_settled() {
   echo 5
 }
 
+# ── Ensure Workload Scripts ────────────────────────────────────────────────
+ensure_workload_scripts() {
+  if [ "$BENCH_ENV" = "k8s" ]; then
+    if ! kubectl -n "$NS" exec deploy/loadgen -- test -f /tmp/mt/dashboard.sql 2>/dev/null; then
+      echo "--> Workload scripts missing in loadgen pod; restoring..." >&2
+      kubectl -n "$NS" exec deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
+      for f in dashboard write; do
+        if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
+          kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
+        fi
+      done
+    fi
+  fi
+}
+
 # ── One measured cell ──────────────────────────────────────────────────────
 #
 # Runs path A, then warms and runs path B, and prints a result row.
 # The ONLY difference between the paths is host and port. Same pgbench binary,
 # same script, same data, same node class, same zone.
 cell() {
+  ensure_workload_scripts
   local label="$1"; shift
   local a b h0 m0 h1 m1 warm
 

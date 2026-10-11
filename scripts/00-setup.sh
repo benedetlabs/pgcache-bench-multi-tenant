@@ -73,13 +73,15 @@ if [ "$BENCH_ENV" = "docker" ]; then
        select 'TOTAL ' || pg_size_pretty(pg_database_size(current_database()))\""
 else
   CURRENT_ORDERS=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c \
-    "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
+    "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+    psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
     \"SELECT count(*) FROM orders;\"" 2>/dev/null || echo "0")
   CURRENT_ORDERS="${CURRENT_ORDERS//[[:space:]]/}"
   [ -z "$CURRENT_ORDERS" ] && CURRENT_ORDERS=0
 
   CURRENT_TENANTS=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c \
-    "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
+    "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+    psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
     \"SELECT count(DISTINCT tenant_id) FROM orders;\"" 2>/dev/null || echo "0")
   CURRENT_TENANTS="${CURRENT_TENANTS//[[:space:]]/}"
   [ -z "$CURRENT_TENANTS" ] && CURRENT_TENANTS=0
@@ -92,7 +94,8 @@ else
       echo "--- applying $f.sql (scale=$SCALE, tenants=$TENANTS) ---"
       kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/$f.sql" < "$HERE/../sql/$f.sql"
       kubectl -n "$NS" exec deploy/loadgen -- \
-        bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -v scale=$SCALE -v tenants=$TENANTS -q -f /tmp/$f.sql"
+        bash -c "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+        psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -v scale=$SCALE -v tenants=$TENANTS -q -f /tmp/$f.sql"
     done
   fi
 
@@ -104,12 +107,14 @@ else
 
   echo "--- sizes ---"
   kubectl -n "$NS" exec deploy/loadgen -- bash -c \
-    "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
+    "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+     psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
        select rpad(relname,12) || lpad(n_live_tup::text, 9) || '  ' ||
               pg_size_pretty(pg_total_relation_size(relid))
          from pg_stat_user_tables where relname not like 'pgbench%'
         order by n_live_tup desc\""
   kubectl -n "$NS" exec deploy/loadgen -- bash -c \
-    "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
+    "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+     psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
        select 'TOTAL ' || pg_size_pretty(pg_database_size(current_database()))\""
 fi

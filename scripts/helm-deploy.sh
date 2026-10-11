@@ -109,6 +109,15 @@ case "$MODE" in
     echo ""
     echo "--> Verifying node distribution (must land on 3 distinct nodes):"
     kubectl -n "$NS" get pods -o wide || true
+
+    # If this was a fresh deployment without prior pod IPs, resolve IPs and apply direct routing now
+    if [ -z "${ORIGIN_IP:-}" ] || [ -z "${PGCACHE_IP:-}" ]; then
+      echo "--> Resolving fresh pod IPs for direct node routing..."
+      kubectl -n "$NS" rollout status statefulset/origin --timeout=3m 2>/dev/null || true
+      kubectl -n "$NS" rollout status deploy/pgcache --timeout=3m 2>/dev/null || true
+      kubectl -n "$NS" rollout status deploy/loadgen --timeout=3m 2>/dev/null || true
+      "$REPO_ROOT/scripts/tune-network.sh" 2>/dev/null || true
+    fi
     ;;
 
   --template)
