@@ -1,0 +1,8 @@
+sweep	param	clients	A_lat_ms	A_rps	B_lat_ms	B_rps	hit_ratio	gain_pct	warm_passes
+tenants	1	8	27.082	295	16.795	476	1.000	61	2
+tenants	10	8	27.741	288	20.950	382	1.000	33	2
+tenants	50	8	29.940	267	15.818	506	1.000	90	2
+tenants	100	8	25.247	317	16.255	492	1.000	55	2
+tenants	500	8	26.865	298	15.672	510	1.000	71	3
+tenants	1000	8	24.521	326	16.801	476	1.000	46	3
+tenants	2000	8	25.970	308	15.535	515	1.000	67	4

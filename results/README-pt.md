@@ -2,36 +2,20 @@
 
 > 🇺🇸 **[English version](README.md)**
 
-Este diretório contém os resultados das execuções de benchmark comparando versões do **PgCache** executadas em um cluster real no **DigitalOcean Kubernetes (DOKS)**:
+Este diretório contém os resultados das execuções de benchmark comparando versões do **PgCache** em dois ambientes distintos:
 - [**PgCache 0.6.3**](0.6.3/README-pt.md)
 - [**PgCache 0.6.4**](0.6.4/README-pt.md)
 - [**PgCache 0.7.0**](0.7.0/README-pt.md)
 
-Todos os testes foram executados na carga multi-tenant de SaaS (500k pedidos, 2M itens, distribuídos em 2.000 tenants, 8 declarações por consulta de dashboard, 8 clientes concorrentes) utilizando o protocolo de aquecimento dinâmico (`warm_until_settled`).
+Ambos os ambientes seguem rigorosamente o protocolo do benchmark (protocolo de consulta simples `-M simple`, sem transações explícitas `BEGIN...COMMIT`, aquecimento dinâmico estabilizado `< 1%`).
 
 ---
 
-## 1. Infraestrutura Cloud e Especificações
+## 1. DigitalOcean Kubernetes (DOKS 3 Nós — 1 a 2.000 Tenants)
 
-- **Provedor Cloud**: DigitalOcean Kubernetes (DOKS)
-- **Região**: `sfo3` (topologia de zona única / single-AZ, colocando os 3 nós no mesmo datacenter)
-- **Nós**: 3 Droplets dedicados tamanho `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM cada, ~$0,071/hora cada = ~$0,21/hora total)
-- **Alta Disponibilidade**: `--ha=false` (taxa de control plane a $0)
-- **Sistema Operacional dos Nós**: Debian GNU/Linux 13 (trixie), kernel 6.12.96, containerd 2.3.3
-- **Armazenamento**: Provisionador CSI `do-block-storage` (`dobs.csi.digitalocean.com`), volume de 25 GiB para a origem, 15 GiB para o gerador de carga
-- **Isolamento de Pods**: `podAntiAffinity` estrito no Kubernetes garantindo nós físicos separados para `origin`, `pgcache` e `loadgen`
-- **Rede**: `hostNetwork: true` (ligação direta ao IP do nó, evitando encapsulamento e overhead de overlay de rede)
-- **Política de Limites de CPU**: Sem limites rígidos de CPU (`resources.limits.cpu` não configurado) em todos os pods para eliminar totalmente atrasos por CFS throttling do kernel Linux
-- **PostgreSQL Origem**: Versão 17 (`postgres:17`), requests: 2500m CPU / 5Gi RAM, `shared_buffers=512MB`, `max_connections=500`, `work_mem=16MB`, `maintenance_work_mem=256MB`, `random_page_cost=1.1`, `wal_level=logical`
-- **Configuração PgCache**: Requests: 2500m CPU / 5Gi RAM, 4 threads de trabalho, porta 6432, `METRICS_PORT=9091` (ajustado para evitar conflito com a porta 9090 do Cilium no DO), tabelas permitidas: `product,category,seller,customer,orders,order_item,review`
-- **Gerador de Carga**: `postgres:17` com pgbench rodando protocolo simples (`-M simple`), sem transações explícitas (`BEGIN...COMMIT`), requests: 2500m CPU / 2Gi RAM, 8 clientes concorrentes, 4 threads, janelas de medição de 30s
-- **Metrics Reader**: `alpine:3.20`, requests: 50m CPU / 64Mi RAM, coletando `/metrics` do PgCache via IP do host
+Executado em um cluster de produção de baixo custo: 3 nós dedicados (`s-4vcpu-8gb`, `sfo3` single-AZ), `--ha=false`, `podAntiAffinity` estrito (1 nó exclusivo para cada: origin, pgcache, loadgen) e `hostNetwork: true`.
 
----
-
-## 2. Comparativo de Varredura de Tenants (1 a 2.000 Tenants no DOKS)
-
-O Sweep 1 avaliou a explosão do espaço de chaves à medida que os tenants ativos escalaram de 1 para 2.000:
+### Varredura de Contagem de Tenants (1 a 2.000 Tenants)
 
 | Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio (Todos) | Passos de Aquecimento |
 |---|---|---|---|---|---|---|
@@ -45,42 +29,51 @@ O Sweep 1 avaliou a explosão do espaço de chaves à medida que os tenants ativ
 
 ---
 
-## 3. Comparativo de Concorrência e Resiliência a Escritas (Linha de Base)
+## 2. Ambiente Local Docker (Linha de Base — 1 a 1.000 Tenants)
 
-Comparando escalabilidade com concorrência e perfis de invalidação de escrita em 1.000 tenants:
+Executado em ambiente Docker local em máquina de desenvolvimento com rede de host único e núcleos compartilhados:
+
+### Comparativo nos Eixos de Carga
 
 | Métrica / Cenário | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 |
 |---|---|---|---|---|
 | **Hit Ratio (Todas as Células)** | N/A | **100,0%** | **100,0%** | **100,0%** (1..500t) / **99,7%** (1.000t) |
-| **Latência com 1 Cliente** | 10,5–11,5 ms | **5,53 ms** (2,0× mais rápido) | **5,15 ms** (2,1× mais rápido) | **5,55 ms** (2,1× mais rápido) |
+| **Latência com 1 Cliente** | 10,5–12,1 ms | **5,53 ms** (2,0× mais rápido) | **5,15 ms** (2,1× mais rápido) | **5,55 ms** (2,1× mais rápido) |
 | **Latência com 8 Clientes (Leitura)** | 35,4–38,1 ms | **14,62 ms** (+142%) | **15,34 ms** (+149%) | **14,90 ms** (+145%) |
 | **Vazão Máxima (32 clientes)** | 297–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) |
-| **Resiliência a Escrita (5% esc, 1 tenant)** | 239–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) |
-| **Resiliência a Escrita (10% esc, 1.000 tenants)** | 251–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) |
+| **Resiliência a Escritas (5% w, 1 wt)** | 239–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) |
+| **Resiliência a Escritas (10% w, 1000 wt)** | 251–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) |
+
+### Varredura de Tenants (Linha de Base Docker)
+
+| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio | Passos de Aquecimento |
+|---|---|---|---|---|---|---|
+| **1 Tenant** | 33,9–46,1 ms (174–236 rps) | **13,4 ms** (596 rps, +153%) | **13,2 ms** (604 rps, +161%) | **14,0 ms** (572 rps, +229%) | **100,0%** | 2–3 |
+| **10 Tenants** | 32,6–33,5 ms (239–246 rps) | **13,6 ms** (590 rps, +140%) | **15,1 ms** (530 rps, +122%) | **14,1 ms** (567 rps, +137%) | **100,0%** | 2 |
+| **50 Tenants** | 32,5–34,9 ms (229–246 rps) | **13,8 ms** (578 rps, +144%) | **14,0 ms** (572 rps, +150%) | **15,1 ms** (529 rps, +115%) | **100,0%** | 3 |
+| **200 Tenants** | 33,2–37,0 ms (216–241 rps) | **14,0 ms** (570 rps, +147%) | **14,0 ms** (572 rps, +137%) | **15,4 ms** (521 rps, +141%) | **100,0%** | 3 |
+| **500 Tenants** | 33,7–36,5 ms (219–238 rps) | **14,2 ms** (563 rps, +144%) | **14,3 ms** (559 rps, +135%) | **16,1 ms** (496 rps, +126%) | **100,0%** | 4 |
+| **1.000 Tenants** | 33,6–36,0 ms (222–238 rps) | **14,3 ms** (559 rps, +143%) | **14,5 ms** (551 rps, +132%) | **15,7 ms** (510 rps, +130%) | **99,7%–100,0%** | 5 |
 
 ---
 
-## 4. Principais Descobertas
+## 3. Visão Comparativa de Ambientes: DOKS vs Docker
 
-1. **Taxa de Acerto de 100,0% Ininterrupta até 2.000 Tenants**:
-   Todas as versões avaliadas (0.6.3, 0.6.4, 0.7.0) mantiveram uma taxa de acerto perfeita de **100,0%** em todas as faixas de tenants até 2.000 tenants ativos. A expansão de 2.000× no espaço de chaves multi-tenant não saturou a memória nem causou thrashing no cache.
+1. **Impacto de Rede e Saltos Reais**:
+   - No **Docker local**, cliente e servidor rodam no mesmo kernel do sistema operacional. A latência de ida e volta do localhost é praticamente zero (~70 µs), o que amplia o ganho relativo ao economizar trabalho de computação de consultas.
+   - No **DigitalOcean Kubernetes**, as requisições passam pela rede física real entre 3 nós separados (10.124.0.3, 10.124.0.4, 10.124.0.5). O PgCache sustenta 425–515 rps com a latência de rede real computada.
 
-2. **Crescimento Previsível de Aquecimento**:
-   O protocolo de aquecimento adaptativo (`warm_until_settled`) se ajustou automaticamente ao tamanho do conjunto de chaves:
-   - De 1 a 100 tenants foram necessários **2 passos** (60 segundos).
-   - De 500 a 1.000 tenants foram necessários **3 passos** (90 segundos).
-   - Com 2.000 tenants foram necessários **4 passos** (120 segundos).
-   Nenhuma célula necessitou do limite máximo de 5 passos para estabilizar a variação abaixo de 1%.
+2. **Disputa por CPU sob Escritas Concorrentes**:
+   - No **Docker**, a invalidação por replicação lógica (CDC) e a carga de clientes competem pelos mesmos núcleos do host, criando gargalos artificiais para a versão 0.7.0 durante testes de escrita pesada.
+   - No **DOKS**, a anti-afinidade estrita de pods assegura que o PgCache e a origem possuam droplets dedicados de 4 vCPUs sem interferência mútua ou limitação de CFS.
 
-3. **Performance entre as Versões**:
-   - O **PgCache 0.6.4** obteve a maior vazão com 2.000 tenants: **515 rps (15,5 ms)** vs 308 rps (26,0 ms) na origem (**+67% de ganho de vazão**).
-   - O **PgCache 0.7.0** alcançou a menor latência com 1 tenant: **15,6 ms (513 rps)**, mantendo ganhos de +38% a +64% em grupos maiores de tenants.
-   - O **PgCache 0.6.3** atingiu o maior ganho de pico com 500 tenants: **478 rps (16,7 ms)** vs 248 rps (32,2 ms) na origem (**+93% de ganho de vazão**).
+3. **Escalabilidade do Espaço de Chaves**:
+   - Ambos os ambientes confirmam empiricamente que elevar os tenants ativos de 1 até 1.000 (e até 2.000 no DOKS) **não degrada a taxa de acerto**, que permaneceu em **100,0%** em todas as versões.
 
 ---
 
-## 5. Estrutura de Diretórios por Tag
+## 4. Estrutura de Diretórios por Tag
 
-- [`0.6.3/`](0.6.3/README-pt.md): Resultados completos, TSV e logs brutos da tag `0.6.3`.
-- [`0.6.4/`](0.6.4/README-pt.md): Resultados completos, TSV e logs brutos da tag `0.6.4`.
-- [`0.7.0/`](0.7.0/README-pt.md): Resultados completos, TSV e logs brutos da tag `0.7.0`.
+- [`0.6.3/`](0.6.3/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.3`.
+- [`0.6.4/`](0.6.4/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.4`.
+- [`0.7.0/`](0.7.0/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.7.0`.

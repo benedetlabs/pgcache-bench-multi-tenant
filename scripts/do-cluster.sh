@@ -50,7 +50,7 @@ CMD="${1:-}"
 
 CLUSTER_NAME="${2:-pgcache-bench}"
 SIZE="${3:-s-4vcpu-8gb}"
-REGION="${4:-nyc1}"
+REGION="${4:-sfo2}"
 
 case "$CMD" in
   create)
