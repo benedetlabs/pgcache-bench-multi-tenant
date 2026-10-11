@@ -6,9 +6,12 @@
 # ratio should fall as tenants rise.
 #
 # Concurrency is held at 8 clients so that tenant count is the only variable.
+# Configurable:
+#   TENANTS_LIST="1 10 50 200" (or e.g. "1 10 50 200 500 1000")
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 header tenants
-for T in 1 10 50 200; do
+TENANTS_LIST="${TENANTS_LIST:-1 10 50 200}"
+for T in $TENANTS_LIST; do
   cell "$T" -f /tmp/mt/dashboard.sql -D tenants=$T
 done

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Creates and seeds the schema. Run once, before any sweep. Takes ~1 minute.
+# Creates and seeds the schema. Run once, before any sweep. Takes ~1 minute on Scale 1.
 #
 #   ./00-setup.sh
+#
+# Configurable variables:
+#   SCALE=1       (1 -> 500k orders, ~463 MB; 5 -> 2.5M orders, ~2.3 GB; 10 -> 5M orders, ~4.6 GB)
+#   TENANTS=200   (Number of distinct tenants to distribute data across, default: 200)
+#   FORCE=1       (Force re-seeding even if tables and row counts already exist)
+#   RESEED=1      (Alias for FORCE=1)
 #
 # Copies the SQL into the loadgen pod and applies it against the ORIGIN.
 # Everything is written through the origin, never through PgCache: seeding via
@@ -16,21 +22,36 @@ if [ -z "$BENCH_ENV" ]; then
     BENCH_ENV="k8s"
   fi
 fi
+
+SCALE="${SCALE:-1}"
+TENANTS="${TENANTS:-200}"
+FORCE="${FORCE:-${RESEED:-0}}"
+EXPECTED_ORDERS=$((500000 * SCALE))
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 
+echo "=== Setup Configuration ==="
+echo "Environment:     $BENCH_ENV"
+echo "Scale Factor:    $SCALE (Target orders: $EXPECTED_ORDERS)"
+echo "Tenants:         $TENANTS"
+echo "Force Reseed:    $FORCE"
+
 if [ "$BENCH_ENV" = "docker" ]; then
-  echo "=== Running setup in Docker Compose environment ==="
-  TABLE_COUNT=$(docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
+  CURRENT_ORDERS=$(docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
     psql -h origin -U bench -d bench -tAc \
-    "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('orders','order_item','customer','product');" 2>/dev/null || echo "0")
-  if [ "$TABLE_COUNT" = "4" ]; then
-    echo "--- Database already seeded (core tables present) ---"
+    "SELECT count(*) FROM orders;" 2>/dev/null || echo "0")
+  CURRENT_ORDERS="${CURRENT_ORDERS//[[:space:]]/}"
+  [ -z "$CURRENT_ORDERS" ] && CURRENT_ORDERS=0
+
+  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
+    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders) ---"
   else
+    echo "--- Seeding database (Current: $CURRENT_ORDERS orders, Target: $EXPECTED_ORDERS) ---"
     for f in 01-schema 02-tenant; do
-      echo "--- applying $f.sql ---"
+      echo "--- applying $f.sql (scale=$SCALE, tenants=$TENANTS) ---"
       docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
-        bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -q -f /sql/$f.sql"
+        bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -v scale=$SCALE -v tenants=$TENANTS -q -f /sql/$f.sql"
     done
   fi
 
@@ -45,18 +66,21 @@ if [ "$BENCH_ENV" = "docker" ]; then
     "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
        select 'TOTAL ' || pg_size_pretty(pg_database_size(current_database()))\""
 else
-  echo "=== Running setup in Kubernetes environment ($NS) ==="
-  TABLE_COUNT=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c \
+  CURRENT_ORDERS=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c \
     "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \
-    \"SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('orders','order_item','customer','product');\"" 2>/dev/null || echo "0")
-  if [ "$TABLE_COUNT" = "4" ]; then
-    echo "--- Database already seeded (core tables present) ---"
+    \"SELECT count(*) FROM orders;\"" 2>/dev/null || echo "0")
+  CURRENT_ORDERS="${CURRENT_ORDERS//[[:space:]]/}"
+  [ -z "$CURRENT_ORDERS" ] && CURRENT_ORDERS=0
+
+  if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
+    echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders) ---"
   else
+    echo "--- Seeding database in Kubernetes (Current: $CURRENT_ORDERS orders, Target: $EXPECTED_ORDERS) ---"
     for f in 01-schema 02-tenant; do
-      echo "--- applying $f.sql ---"
+      echo "--- applying $f.sql (scale=$SCALE, tenants=$TENANTS) ---"
       kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/$f.sql" < "$HERE/../sql/$f.sql"
       kubectl -n "$NS" exec deploy/loadgen -- \
-        bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -q -f /tmp/$f.sql"
+        bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -v scale=$SCALE -v tenants=$TENANTS -q -f /tmp/$f.sql"
     done
   fi
 
@@ -77,4 +101,3 @@ else
     "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -tAc \"
        select 'TOTAL ' || pg_size_pretty(pg_database_size(current_database()))\""
 fi
-

@@ -74,6 +74,9 @@ kubectl -n pgcache-mt get pods -o wide
 
 # 3. Esquema, seed, denormalização do tenant, carga. Cerca de um minuto.
 ./scripts/00-setup.sh
+# Ou para volumes maiores de dados:
+# SCALE=5 ./scripts/00-setup.sh      # ~2,3 GB (2,5M pedidos, 10M itens)
+# SCALE=10 ./scripts/00-setup.sh     # ~4,6 GB (5,0M pedidos, 20M itens)
 
 # 4. As três varreduras. 15 a 25 minutos cada.
 ./scripts/01-tenant-sweep.sh      | tee data/run-tenants.txt

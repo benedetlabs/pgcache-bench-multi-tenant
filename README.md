@@ -75,6 +75,9 @@ kubectl -n pgcache-mt get pods -o wide
 
 # 3. Schema, seed, tenant denormalisation, workload. About a minute.
 ./scripts/00-setup.sh
+# Or scale dataset volume:
+# SCALE=5 ./scripts/00-setup.sh      # ~2.3 GB (2.5M orders, 10M items)
+# SCALE=10 ./scripts/00-setup.sh     # ~4.6 GB (5.0M orders, 20M items)
 
 # 4. The three sweeps. 15-25 minutes each.
 ./scripts/01-tenant-sweep.sh      | tee data/run-tenants.txt

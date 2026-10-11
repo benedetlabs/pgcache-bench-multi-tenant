@@ -30,3 +30,12 @@ This repository contains a rigorous, reproducible benchmark comparing PostgreSQL
    - NEVER set hard CPU limits (`resources.limits.cpu`), as CFS throttling introduces p99 latency spikes indistinguishable from cache misses.
 2. **Docker Compose (`infra/docker-compose.yml`)**:
    - The local Docker Compose setup is strictly for query development, debugging, and SQL syntax checks. It must not be used to produce official benchmark numbers due to near-zero network latency and shared CPU core contention.
+
+## 4. Dataset Sizing and Scale Factors
+
+- **Default Scale (`SCALE=1`)**: Produces 500k orders, 2M order items (~463 MB to 650 MB database size), fitting inside `shared_buffers=1GB` to evaluate the cache against an in-memory database.
+- **Large Scales (`SCALE=5`, `SCALE=10`)**:
+  - `SCALE=5`: 2.5M orders, 10M items (~2.3 GB).
+  - `SCALE=10`: 5.0M orders, 20M items (~4.6 GB).
+  - Used on the 3-node Kubernetes cluster to evaluate performance when the database exceeds `shared_buffers` and tests query aggregation over large tables.
+- **Tenant Scaling (`TENANTS`)**: Configurable via `TENANTS` (default: 200). Expanding to 1,000+ tenants evaluates key-space explosion and cache eviction behavior.

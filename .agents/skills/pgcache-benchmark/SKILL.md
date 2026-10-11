@@ -25,13 +25,21 @@ kubectl -n pgcache-mt get events --sort-by=.lastTimestamp | grep -iE 'preempt|ev
 
 ## Step 1: Database Setup and Seeding
 
-Run database schema creation, tenant denormalization, and seed data setup against the origin (approx. 1 minute):
+Run database schema creation, tenant denormalization, and seed data setup against the origin:
 
 ```bash
+# Default scale (~463 MB in-memory baseline):
 ./scripts/00-setup.sh
+
+# Larger datasets (e.g. Scale 5 -> ~2.3 GB; Scale 10 -> ~4.6 GB):
+SCALE=5 ./scripts/00-setup.sh
+SCALE=10 TENANTS=500 ./scripts/00-setup.sh
+
+# Force re-seed:
+FORCE=1 SCALE=5 ./scripts/00-setup.sh
 ```
 
-This applies `sql/01-schema.sql`, denormalizes `tenant_id` via `sql/02-tenant.sql`, and copies the workload scripts to `/tmp/mt/` inside the `loadgen` pod.
+This applies `sql/01-schema.sql` (scaled via `-v scale`), denormalizes `tenant_id` via `sql/02-tenant.sql`, and copies the workload scripts to `/tmp/mt/` inside the `loadgen` pod.
 
 ## Step 2: Running Benchmark Sweeps
 

@@ -7,9 +7,14 @@
 #
 # The single-client row is the one that isolates caching: with one client there
 # is no queueing at the origin OR at the proxy.
+# Configurable:
+#   TENANTS=200
+#   CLIENTS_LIST="1 4 8 16 32"
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 header clients
-for C in 1 4 8 16 32; do
-  CLIENTS=$C cell "$C" -f /tmp/mt/dashboard.sql -D tenants=200
+TENANTS="${TENANTS:-200}"
+CLIENTS_LIST="${CLIENTS_LIST:-1 4 8 16 32}"
+for C in $CLIENTS_LIST; do
+  CLIENTS=$C cell "$C" -f /tmp/mt/dashboard.sql -D tenants=$TENANTS
 done

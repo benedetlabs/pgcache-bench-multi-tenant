@@ -18,7 +18,9 @@ RAW_TAG="${1:-0.7.0}"
 BASE_TAG="${RAW_TAG%-arm64}"
 DURATION="${2:-5}"
 BENCH_ENV="docker"
-export BENCH_ENV DURATION
+SCALE="${SCALE:-1}"
+TENANTS="${TENANTS:-200}"
+export BENCH_ENV DURATION SCALE TENANTS
 
 ARCH="$(uname -m)"
 if [ "$ARCH" = "arm64" ]; then
