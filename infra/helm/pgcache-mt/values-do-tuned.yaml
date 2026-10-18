@@ -11,6 +11,7 @@
 #    - NUM_WORKERS = 8
 #    - PGCACHE_POPULATION_WORKERS_MIN = 4
 #    - MEMO_CACHE_SIZE = "1073741824" (1 GiB raw integer bytes)
+#    - MEMORY_LIMIT = "3758096384" (3.5 GiB raw integer bytes)
 # 3. Direct node IP routing & hostNetwork: true
 
 affinity:
@@ -73,6 +74,7 @@ pgcache:
   workers: 8
   populationWorkersMin: 4
   memoCacheSize: "1073741824"
+  memoryLimit: "3758096384"
   listenPort: 6432
   metricsPort: 9091
   resources:

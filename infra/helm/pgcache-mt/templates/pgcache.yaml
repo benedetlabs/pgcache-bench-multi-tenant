@@ -89,6 +89,10 @@ spec:
             - name: MEMO_CACHE_SIZE
               value: {{ .Values.pgcache.memoCacheSize | quote }}
             {{- end }}
+            {{- if .Values.pgcache.memoryLimit }}
+            - name: MEMORY_LIMIT
+              value: {{ .Values.pgcache.memoryLimit | quote }}
+            {{- end }}
             {{- if .Values.pgcache.populationWorkersMin }}
             - name: PGCACHE_POPULATION_WORKERS_MIN
               value: {{ .Values.pgcache.populationWorkersMin | quote }}
@@ -100,3 +104,11 @@ spec:
               name: metrics
           resources:
             {{- toYaml .Values.pgcache.resources | nindent 12 }}
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi

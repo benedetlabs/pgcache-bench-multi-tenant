@@ -75,6 +75,7 @@ pgcache:
   workers: 4
   populationWorkersMin: ""
   memoCacheSize: ""
+  memoryLimit: ""
   listenPort: 6432
   metricsPort: 9090
   resources:

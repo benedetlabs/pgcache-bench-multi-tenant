@@ -112,6 +112,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: dshm
+              mountPath: /dev/shm
           readinessProbe:
             exec:
               command:
@@ -122,6 +124,11 @@ spec:
                 - {{ .Values.origin.database }}
             periodSeconds: 5
             failureThreshold: 30
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
   volumeClaimTemplates:
     - metadata:
         name: data

@@ -44,6 +44,7 @@ pgcache:
     - review
   telemetry: "off"
   workers: 2
+  memoryLimit: "3758096384"
   listenPort: 6432
   metricsPort: 9090
   resources:

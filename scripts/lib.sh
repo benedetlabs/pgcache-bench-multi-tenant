@@ -44,7 +44,7 @@ ex() {
   else
     local tries=0 out=""
     while [ $tries -lt 3 ]; do
-      if out=$(kubectl -n "$NS" exec deploy/loadgen -- bash -c "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; $1" 2>&1); then
+      if out=$(kubectl -n "$NS" exec -c bench deploy/loadgen -- bash -c "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; $1" 2>&1); then
         echo "$out"
         return 0
       fi
@@ -65,7 +65,22 @@ ex() {
 # metrics-reader reaches PgCache over the node IP, which is what the headless
 # Service resolves to under hostNetwork.
 pgcache_ip() {
-  kubectl -n "$NS" get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}'
+  if [ -n "${CACHED_PGCACHE_IP:-}" ]; then
+    echo "$CACHED_PGCACHE_IP"
+    return 0
+  fi
+  local ip="" tries=0
+  while [ $tries -lt 5 ]; do
+    ip=$(kubectl -n "$NS" get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
+    if [ -n "$ip" ]; then
+      CACHED_PGCACHE_IP="$ip"
+      echo "$ip"
+      return 0
+    fi
+    tries=$((tries + 1))
+    sleep 2
+  done
+  return 1
 }
 
 # Prints: <cumulative_hits> <cumulative_misses> <cumulative_mv_fallthrough>
@@ -95,20 +110,21 @@ scrape() {
   else
     local ip; ip="$(pgcache_ip)"
     [ -n "$ip" ] || die "could not resolve the pgcache pod IP"
-    local mport="${PGCACHE_METRICS_PORT:-}"
+    local mport="${PGCACHE_METRICS_PORT:-${CACHED_PGCACHE_MPORT:-}}"
     if [ -z "$mport" ]; then
-      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9090")
-      [ -z "$mport" ] && mport="9090"
+      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9091")
+      [ -z "$mport" ] && mport="9091"
+      CACHED_PGCACHE_MPORT="$mport"
     fi
     local out="" tries=0
-    while [ $tries -lt 3 ]; do
+    while [ $tries -lt 5 ]; do
       out=$(kubectl -n "$NS" exec deploy/metrics-reader -- \
         sh -c "wget -qO- --timeout=20 http://$ip:$mport/metrics" 2>/dev/null || true)
       if [ -n "$out" ] && echo "$out" | grep -q "pgcache_queries_"; then
         break
       fi
       tries=$((tries + 1))
-      sleep 1
+      sleep 2
     done
     [ -n "$out" ] || die "failed to scrape pgcache metrics from metrics-reader (port $mport)"
     echo "$out" | awk '/^pgcache_queries_cache_hit /     {h=$2}
@@ -191,21 +207,43 @@ reset_pgcache() {
       tries=$((tries + 1))
       sleep 1
     done
+  else
+    kubectl -n "$NS" rollout restart deploy/pgcache >/dev/null 2>&1 || true
+    kubectl -n "$NS" rollout status deploy/pgcache --timeout=3m >/dev/null 2>&1 || true
+    local ip mport tries=0
+    ip="$(pgcache_ip)"
+    mport="${PGCACHE_METRICS_PORT:-}"
+    if [ -z "$mport" ]; then
+      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9090")
+      [ -z "$mport" ] && mport="9090"
+    fi
+    while [ $tries -lt 30 ]; do
+      ip="$(pgcache_ip)"
+      if [ -n "$ip" ] && \
+         kubectl -n "$NS" exec deploy/metrics-reader -- sh -c "wget -qO- --timeout=5 http://$ip:$mport/metrics" 2>/dev/null | grep -q "pgcache_queries_" && \
+         ex "pg_isready -h \$PGCACHE_HOST -p \$PGCACHE_PORT -U \$PGUSER -d \$PGDATABASE >/dev/null 2>&1"; then
+        sleep 1
+        return 0
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
   fi
 }
 
 # ── Ensure Workload Scripts ────────────────────────────────────────────────
 ensure_workload_scripts() {
-  if [ "$BENCH_ENV" = "k8s" ]; then
-    if ! kubectl -n "$NS" exec deploy/loadgen -- test -f /tmp/mt/complex-dashboard.sql 2>/dev/null; then
+  if [ "$BENCH_ENV" = "k8s" ] && [ "${WORKLOAD_SCRIPTS_READY:-0}" != "1" ]; then
+    if ! kubectl -n "$NS" exec -c bench deploy/loadgen -- test -f /tmp/mt/complex-dashboard.sql 2>/dev/null; then
       echo "--> Workload scripts missing in loadgen pod; restoring..." >&2
-      kubectl -n "$NS" exec deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
+      kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
       for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard; do
         if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
-          kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
+          kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
         fi
       done
     fi
+    WORKLOAD_SCRIPTS_READY=1
   fi
 }
 

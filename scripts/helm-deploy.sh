@@ -105,7 +105,7 @@ case "$MODE" in
       -f "$CHART_DIR/values-do-tuned.yaml" \
       --namespace "$NS" \
       --set image.pgcache.tag="$TAG" \
-      "${EXTRA_ARGS[@]}"
+      ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
     echo ""
     echo "--> Verifying node distribution (must land on 3 distinct nodes):"
     kubectl -n "$NS" get pods -o wide || true
