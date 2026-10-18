@@ -210,12 +210,13 @@ reset_pgcache() {
   else
     kubectl -n "$NS" rollout restart deploy/pgcache >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status deploy/pgcache --timeout=3m >/dev/null 2>&1 || true
+    unset CACHED_PGCACHE_IP
     local ip mport tries=0
     ip="$(pgcache_ip)"
-    mport="${PGCACHE_METRICS_PORT:-}"
+    mport="${PGCACHE_METRICS_PORT:-${CACHED_PGCACHE_MPORT:-}}"
     if [ -z "$mport" ]; then
-      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9090")
-      [ -z "$mport" ] && mport="9090"
+      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9091")
+      [ -z "$mport" ] && mport="9091"
     fi
     while [ $tries -lt 30 ]; do
       ip="$(pgcache_ip)"

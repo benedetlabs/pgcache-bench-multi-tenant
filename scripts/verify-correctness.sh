@@ -38,10 +38,10 @@ read_counters() {
       END { printf "%d %d %d %d %d %d %d %d\n", c+0, u+0, h+0, m+0, e+0, a+0, r+0, mvh+0 }'
   else
     local ip; ip="$(pgcache_ip)"
-    local mport="${PGCACHE_METRICS_PORT:-}"
+    local mport="${PGCACHE_METRICS_PORT:-${CACHED_PGCACHE_MPORT:-}}"
     if [ -z "$mport" ]; then
-      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9090")
-      [ -z "$mport" ] && mport="9090"
+      mport=$(kubectl -n "$NS" get svc pgcache -o jsonpath='{.spec.ports[?(@.name=="metrics")].port}' 2>/dev/null || echo "9091")
+      [ -z "$mport" ] && mport="9091"
     fi
     kubectl -n "$NS" exec deploy/metrics-reader -- \
       sh -c "wget -qO- --timeout=20 http://$ip:$mport/metrics" 2>/dev/null | awk '

@@ -72,6 +72,7 @@ echo "--> Ensuring database schema and seeds are loaded..."
 # Run Differential Correctness & Cacheability Gate
 echo "--> Running Differential Correctness & Cacheability Gate..."
 "$HERE/verify-correctness.sh" | tee "$OUT_DIR/verify-correctness.txt"
+cp "$OUT_DIR/verify-correctness.txt" "$OUT_DIR/verify-correctness-docker.txt"
 
 # Source library functions
 source "$HERE/lib.sh"
@@ -188,6 +189,7 @@ if [ "$RUN_COMPLEX" = "1" ]; then
     printf "complex_writes\t%s\t8\t%s\t%s\t%s\t%s\t%.3f\t%s\t%s\n" \
       "$param" "$a_lat" "$a_rps" "$b_lat" "$b_rps" "$(awk -v h="$hit_num" 'BEGIN{print h/100}')" "$gain_num" "$warm" >> "$CTSV"
   done
+  cp "$CTSV" "$OUT_DIR/results-complex-docker.tsv"
 fi
 
 echo "========================================================================"
