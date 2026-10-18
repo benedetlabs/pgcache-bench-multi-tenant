@@ -49,6 +49,11 @@ spec:
                 matchExpressions:
                   - {key: lab/role, operator: In, values: [pgcache, loadgen]}
               topologyKey: kubernetes.io/hostname
+      # For Azure AKS Spot node pools (or use `helm-deploy.sh --aks-tuned`):
+      # nodeSelector:
+      #   kubernetes.azure.com/scalesetpriority: spot
+      # tolerations:
+      #   - {key: kubernetes.azure.com/scalesetpriority, operator: Equal, value: spot, effect: NoSchedule}
       initContainers:
         - name: tune-net-stack
           image: busybox:1.36

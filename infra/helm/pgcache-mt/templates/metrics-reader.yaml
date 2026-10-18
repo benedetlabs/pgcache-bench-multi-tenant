@@ -12,6 +12,14 @@ spec:
       labels:
         app: metrics-reader
     spec:
+      {{- with .Values.metricsReader.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metricsReader.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: shell
           image: "{{ .Values.image.metricsReader.repository }}:{{ .Values.image.metricsReader.tag }}"

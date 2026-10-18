@@ -325,6 +325,16 @@ kubectl get nodes -L topology.kubernetes.io/zone
 *inside* a measurement window invalidates that cell — check for it after every
 sweep and re-run any affected repetition.
 
+**Ultra-low-cost Azure AKS Terraform setup (`infra/terraform/aks/`).** Creating
+an AKS cluster through the Azure Portal enables the `Standard` control plane
+tier ($0.10/hr = ~$73/mo), Container Insights / Log Analytics, Managed
+Prometheus, Managed Grafana, Defender, and Multi-AZ node pools by default. To
+reproduce the exact 3-node single-AZ Spot topology (`Standard_D8as_v5` or
+`Standard_E4s_v5`) with a **$0.00/hr Free control plane** and **zero observability
+or security add-on billing (~$0.10–$0.19/hr total)**, use
+[`infra/terraform/aks/`](infra/terraform/aks/README.md) and
+[`scripts/aks-cluster.sh`](scripts/aks-cluster.sh).
+
 ### 7.2 PostgreSQL — every flag, and why
 
 ```
@@ -1184,6 +1194,8 @@ pgcache-multi-tenant/
 │       ├── pgcache-complex-scenarios/ Complex SQL & correctness gate skill
 │       └── pgcache-metrics-analyst/ Telemetry & Amdahl's Law analyst skill
 ├── infra/
+│   ├── terraform/
+│   │   └── aks/                     Ultra-low-cost Azure AKS + 3-node Spot Terraform
 │   ├── k8s/
 │   │   ├── 00-namespace-and-secret.yaml
 │   │   ├── 01-origin.yaml           PostgreSQL, every flag explained
@@ -1211,6 +1223,8 @@ pgcache-multi-tenant/
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          complex scenario, tenant, client & write sweeps
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
+│   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
+│   ├── do-cluster.sh                turnkey DigitalOcean DOKS helper
 │   └── run-tag-verification.sh      automated tag verification runner
 ├── data/
 │   └── results.tsv                  all 15 cells, machine-readable

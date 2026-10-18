@@ -1,0 +1,35 @@
+# ============================================================================
+# Example Terraform Variables for Low-Cost Azure AKS Benchmark Cluster
+# Copy to terraform.tfvars to customize:
+#   cp terraform.tfvars.example terraform.tfvars
+# ============================================================================
+
+resource_group_name = "rg-pgcache-bench"
+cluster_name        = "aks-pgcache-bench"
+location            = "eastus2"
+availability_zone   = "1"
+
+# Control plane tier: MUST remain "Free" ($0.00/hr) to avoid the $0.10/hr
+# (~$73/month) Standard tier management charge.
+sku_tier = "Free"
+
+# 1-node System Pool (Azure AKS forbids Spot on the default system pool).
+# Standard_B2als_v2 (2 vCPU, 4 GiB RAM) costs ~$0.018-$0.032/hr.
+# Fallback if B2als_v2 is unavailable in your region: "Standard_B2s" or "Standard_D2as_v5"
+system_vm_size = "Standard_B2als_v2"
+
+# 3-node Spot Benchmark Pool (1 pod per node via podAntiAffinity):
+# - "Standard_D8as_v5" (8 vCPU, 32 GiB RAM, ~$0.038-$0.055/hr Spot each) -> Matches README.md Section 7.1
+# - "Standard_E4s_v5"  (4 vCPU, 32 GiB RAM, ~$0.025-$0.035/hr Spot each) -> Same 32 GiB RAM, uses only 12 Spot vCPUs total
+# - "Standard_D4as_v5" (4 vCPU, 16 GiB RAM, ~$0.019-$0.028/hr Spot each) -> Ultra-budget 4 vCPU Spot
+benchmark_vm_size    = "Standard_D8as_v5"
+benchmark_node_count = 3
+spot_max_price       = -1
+
+# OS Disk configuration:
+# - Use "Managed" (default) with os_disk_size_gb = 30 for "s"-series VMs without
+#   local temp storage (Standard_D8as_v5, Standard_E4s_v5, Standard_D4as_v5).
+# - Use "Ephemeral" ($0 disk cost) only when selecting "ds"-series VMs that include
+#   local NVMe/temp storage (e.g. Standard_D8ads_v5, Standard_E4ds_v5).
+os_disk_type    = "Managed"
+os_disk_size_gb = 30

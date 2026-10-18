@@ -35,7 +35,26 @@ helm install pgcache-mt infra/helm/pgcache-mt \
   --set image.pgcache.tag="0.7.0-arm64"
 ```
 
-### 2. Local / Single-Node Kubernetes (Docker Desktop, kind, k3d, minikube)
+### 2. Azure Kubernetes Service (AKS — 3-Node Single-AZ Spot Pool)
+
+When deploying onto the low-cost Azure AKS cluster provisioned by [`infra/terraform/aks/`](../../terraform/aks/README.md), use `values-aks-tuned.yaml` (compatible with both 8-vCPU `Standard_D8as_v5` and 4-vCPU `Standard_E4s_v5` / `Standard_D4as_v5` Spot pools) or `values-aks.yaml` (strict 8-vCPU / 32-GiB requests):
+
+```bash
+./scripts/helm-deploy.sh --aks-tuned 0.7.1
+# or directly with Helm:
+helm upgrade --install pgcache-mt infra/helm/pgcache-mt \
+  -f infra/helm/pgcache-mt/values-aks-tuned.yaml \
+  --namespace pgcache-mt \
+  --create-namespace \
+  --set image.pgcache.tag="0.7.1"
+```
+
+This automatically:
+- Schedules `origin`, `pgcache`, and `loadgen` onto the 3 Spot worker nodes (`kubernetes.azure.com/scalesetpriority: spot` + `NoSchedule` toleration + 1-pod-per-node `podAntiAffinity`).
+- Pins `metrics-reader` onto the 1-node `system` pool (`kubernetes.azure.com/mode: system` + `CriticalAddonsOnly` toleration).
+- Uses `managed-csi` for PersistentVolumeClaims and enables kernel TCP + RPS network stack tuning.
+
+### 3. Local / Single-Node Kubernetes (Docker Desktop, kind, k3d, minikube)
 
 On single-node clusters, anti-affinity must be disabled and resources sized appropriately so all pods can schedule on a local Docker daemon (e.g. 4 CPUs / 8 GB RAM):
 
@@ -44,7 +63,7 @@ helm install pgcache-mt infra/helm/pgcache-mt \
   -f infra/helm/pgcache-mt/values-docker.yaml \
   --namespace pgcache-mt \
   --create-namespace \
-  --set image.pgcache.tag="0.7.0-arm64"
+  --set image.pgcache.tag="0.7.1-arm64"
 ```
 
 ---
@@ -53,11 +72,14 @@ helm install pgcache-mt infra/helm/pgcache-mt \
 
 | Parameter | Description | Default |
 |---|---|---|
-| `image.pgcache.tag` | PgCache image tag (e.g. `0.6.3`, `0.6.4`, `0.7.0`, `0.7.0-arm64`) | `0.7.0` |
+| `image.pgcache.tag` | PgCache image tag (e.g. `0.6.3`, `0.6.4`, `0.7.0`, `0.7.1`, `0.7.1-arm64`) | `0.7.1` |
 | `image.pgcache.repository` | PgCache image repository | `pgcache/pgcache` |
 | `pgcache.allowedTables` | Tables cached by PgCache (handles list or string safely) | `[product, category, seller, customer, orders, order_item, review]` |
 | `affinity.enabled` | Enforce 1 pod per node via anti-affinity | `true` |
 | `hostNetwork.enabled` | Bypass kube-proxy and network overlay latency | `true` |
+| `nodeSelector` | Node selector for benchmark pods (`origin`, `pgcache`, `loadgen`) | `{}` |
+| `tolerations` | Tolerations for benchmark pods (e.g. Azure Spot `NoSchedule` taint) | `[]` |
+| `metricsReader.nodeSelector` | Pin `metrics-reader` to the `system` node pool | `{}` |
 | `origin.sharedBuffers` | Sized so dataset fits entirely in memory | `1GB` |
 
 ### Note on `ALLOWED_TABLES`

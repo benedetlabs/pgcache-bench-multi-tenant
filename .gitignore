@@ -2,3 +2,20 @@
 data/run-*.txt
 *.log
 .DS_Store
+
+# Terraform local state and provider binaries
+**/.terraform/*
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+

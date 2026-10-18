@@ -20,7 +20,9 @@ spec:
     metadata:
       labels: {app: metrics-reader}
     spec:
-      # nodeSelector: {your-system-pool-label: "true"}
+      # For Azure AKS with a CriticalAddonsOnly system pool (`helm-deploy.sh --aks-tuned`):
+      # nodeSelector: {kubernetes.azure.com/mode: "system"}
+      # tolerations: [{key: "CriticalAddonsOnly", operator: "Exists"}]
       containers:
         - name: shell
           image: alpine:3.20

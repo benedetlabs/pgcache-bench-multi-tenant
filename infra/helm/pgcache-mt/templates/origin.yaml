@@ -42,6 +42,14 @@ spec:
                     values: [pgcache, loadgen]
               topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- with (.Values.origin.nodeSelector | default .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (.Values.origin.tolerations | default .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.hostAliases }}
       hostAliases:
         {{- toYaml . | nindent 8 }}

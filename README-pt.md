@@ -329,6 +329,16 @@ kubectl get nodes -L topology.kubernetes.io/zone
 *dentro* de uma janela de medição invalida aquela célula — confira depois de cada
 varredura e refaça a repetição afetada.
 
+**Terraform de ultra-baixo custo para Azure AKS (`infra/terraform/aks/`).** Criar
+um cluster AKS pelo Portal da Azure ativa por padrão o control plane `Standard`
+(US$ 0,10/h = ~US$ 73/mês), Container Insights / Log Analytics, Managed
+Prometheus, Managed Grafana, Defender e node pools Multi-AZ. Para reproduzir a
+exata topologia de 3 nós Spot em zona única (`Standard_D8as_v5` ou
+`Standard_E4s_v5`) com **control plane Free (US$ 0,00/h)** e **zero cobrança de
+add-ons de observabilidade ou segurança (~US$ 0,10–0,19/h total)**, utilize
+[`infra/terraform/aks/`](infra/terraform/aks/README-pt.md) e
+[`scripts/aks-cluster.sh`](scripts/aks-cluster.sh).
+
 ### 7.2 PostgreSQL — cada flag, e por quê
 
 ```
@@ -1199,6 +1209,8 @@ pgcache-multi-tenant/
 │       ├── pgcache-complex-scenarios/ Skill de SQL complexo e gate de correção
 │       └── pgcache-metrics-analyst/ Skill de Telemetria e Lei de Amdahl
 ├── infra/
+│   ├── terraform/
+│   │   └── aks/                     Terraform de ultra-baixo custo Azure AKS + 3 nós Spot
 │   ├── k8s/
 │   │   ├── 00-namespace-and-secret.yaml
 │   │   ├── 01-origin.yaml           PostgreSQL, cada flag explicada
@@ -1226,6 +1238,8 @@ pgcache-multi-tenant/
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          varreduras de cenários complexos, tenants, clientes e escrita
 │   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
+│   ├── aks-cluster.sh               script automatizado de cluster Azure AKS Spot via Terraform
+│   ├── do-cluster.sh                script automatizado de cluster DigitalOcean DOKS
 │   └── run-tag-verification.sh      script automatizado de verificação por tag
 ├── data/
 │   └── results.tsv                  as 15 células, legível por máquina

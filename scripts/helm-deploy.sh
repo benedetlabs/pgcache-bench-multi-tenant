@@ -3,15 +3,19 @@
 # Helm deployment helper for PgCache Multi-Tenant Benchmark.
 #
 # Usage:
-#   ./scripts/helm-deploy.sh --docker [tag]     # Deploy to Docker Desktop / local k8s
-#   ./scripts/helm-deploy.sh --prod   [tag]     # Deploy to 3-node production k8s
-#   ./scripts/helm-deploy.sh --template [tag]   # Render manifests locally
+#   ./scripts/helm-deploy.sh --docker     [tag] # Deploy to Docker Desktop / local k8s
+#   ./scripts/helm-deploy.sh --prod       [tag] # Deploy to 3-node production k8s
+#   ./scripts/helm-deploy.sh --do         [tag] # Deploy to DigitalOcean Kubernetes (budget)
+#   ./scripts/helm-deploy.sh --do-tuned   [tag] # Deploy to DigitalOcean Kubernetes (tuned)
+#   ./scripts/helm-deploy.sh --aks        [tag] # Deploy to Azure AKS (8-vCPU Spot profile)
+#   ./scripts/helm-deploy.sh --aks-tuned  [tag] # Deploy to Azure AKS (tuned 4/8-vCPU Spot profile)
+#   ./scripts/helm-deploy.sh --template   [tag] # Render manifests locally
 #   ./scripts/helm-deploy.sh --uninstall        # Uninstall pgcache-mt release
 #   ./scripts/helm-deploy.sh --check            # Check cluster readiness
 #
 # Examples:
-#   ./scripts/helm-deploy.sh --docker 0.7.0-arm64
-#   ./scripts/helm-deploy.sh --prod 0.7.0
+#   ./scripts/helm-deploy.sh --docker 0.7.1-arm64
+#   ./scripts/helm-deploy.sh --aks-tuned 0.7.1
 # ============================================================================
 
 set -euo pipefail
@@ -22,7 +26,7 @@ CHART_DIR="$REPO_ROOT/infra/helm/pgcache-mt"
 NS="${NS:-pgcache-mt}"
 
 usage() {
-  echo "Usage: $0 [--docker|--prod|--do|--do-tuned|--template|--uninstall|--check] [tag]"
+  echo "Usage: $0 [--docker|--prod|--do|--do-tuned|--aks|--aks-tuned|--template|--template-aks|--uninstall|--check] [tag]"
   exit 1
 }
 
@@ -120,10 +124,61 @@ case "$MODE" in
     fi
     ;;
 
+  --aks|--aks-tuned|--azure)
+    VALUES_FILE="$CHART_DIR/values-aks-tuned.yaml"
+    if [ "$MODE" = "--aks" ]; then
+      VALUES_FILE="$CHART_DIR/values-aks.yaml"
+    fi
+    echo "=== Deploying PgCache Benchmark Helm Chart to Azure AKS (Spot Pool Profile) ==="
+    echo "Namespace: $NS"
+    echo "Tag:       $TAG"
+    echo "Values:    $VALUES_FILE"
+    kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl label namespace "$NS" pod-security.kubernetes.io/enforce=privileged --overwrite
+
+    EXTRA_ARGS=()
+    ORIGIN_IP="$(kubectl -n "$NS" get pod -l app=origin -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+    if [ -n "$ORIGIN_IP" ]; then
+      echo "--> Configuring direct upstream URL to origin IP: $ORIGIN_IP"
+      EXTRA_ARGS+=(--set pgcache.upstreamUrl="postgres://bench:benchpass@$ORIGIN_IP:5432/bench")
+      EXTRA_ARGS+=(--set loadgen.originHost="$ORIGIN_IP")
+    fi
+    PGCACHE_IP="$(kubectl -n "$NS" get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+    if [ -n "$PGCACHE_IP" ]; then
+      echo "--> Configuring direct pgcache host to IP: $PGCACHE_IP"
+      EXTRA_ARGS+=(--set loadgen.pgcacheHost="$PGCACHE_IP")
+    fi
+
+    helm upgrade --install pgcache-mt "$CHART_DIR" \
+      -f "$VALUES_FILE" \
+      --namespace "$NS" \
+      --set image.pgcache.tag="$TAG" \
+      ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    echo ""
+    echo "--> Verifying node distribution (origin, pgcache, loadgen on 3 Spot nodes; metrics-reader on system node):"
+    kubectl -n "$NS" get pods -o wide || true
+
+    if [ -z "${ORIGIN_IP:-}" ] || [ -z "${PGCACHE_IP:-}" ]; then
+      echo "--> Resolving fresh pod IPs for direct node routing..."
+      kubectl -n "$NS" rollout status statefulset/origin --timeout=4m 2>/dev/null || true
+      kubectl -n "$NS" rollout status deploy/pgcache --timeout=4m 2>/dev/null || true
+      kubectl -n "$NS" rollout status deploy/loadgen --timeout=4m 2>/dev/null || true
+      "$REPO_ROOT/scripts/tune-network.sh" 2>/dev/null || true
+    fi
+    ;;
+
   --template)
     echo "=== Rendering Helm Template Manifests ==="
     helm template pgcache-mt "$CHART_DIR" \
       -f "$CHART_DIR/values-docker.yaml" \
+      --namespace "$NS" \
+      --set image.pgcache.tag="$TAG"
+    ;;
+
+  --template-aks)
+    echo "=== Rendering Azure AKS Helm Template Manifests ==="
+    helm template pgcache-mt "$CHART_DIR" \
+      -f "$CHART_DIR/values-aks-tuned.yaml" \
       --namespace "$NS" \
       --set image.pgcache.tag="$TAG"
     ;;

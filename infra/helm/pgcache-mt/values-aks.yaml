@@ -1,0 +1,104 @@
+# Baseline Azure Kubernetes Service (AKS) profile for pgcache-mt benchmark.
+# Matches README.md Section 7.1 hardware & resource specifications:
+# - 3x Spot worker nodes (Standard_D8as_v5 — 8 vCPU, 32 GiB RAM) in a single AZ
+# - 1x System node (Standard_B2als_v2 — 2 vCPU, 4 GiB RAM) running kube-system & metrics-reader
+# - Direct node IP networking (hostNetwork: true) + podAntiAffinity (1 pod per Spot node)
+
+affinity:
+  # Enforces 3 separate physical Spot nodes across origin, pgcache, and loadgen
+  enabled: true
+
+hostNetwork:
+  # Direct node IP bypasses kube-proxy, NAT, and Azure CNI Overlay overhead
+  enabled: true
+
+netTune:
+  enabled: true
+  image: "busybox:1.36"
+
+# Pin benchmark pods (origin, pgcache, loadgen) strictly to the 3-node Spot user pool
+nodeSelector:
+  kubernetes.azure.com/scalesetpriority: spot
+
+tolerations:
+  - key: "kubernetes.azure.com/scalesetpriority"
+    operator: "Equal"
+    value: "spot"
+    effect: "NoSchedule"
+
+image:
+  origin:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  pgcache:
+    repository: pgcache/pgcache
+    tag: "0.7.1"
+    pullPolicy: IfNotPresent
+  loadgen:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  metricsReader:
+    repository: alpine
+    tag: "3.20"
+    pullPolicy: IfNotPresent
+
+origin:
+  database: bench
+  user: bench
+  password: benchpass
+  sharedBuffers: "1GB"
+  maxConnections: 500
+  workMem: "32MB"
+  maintenanceWorkMem: "512MB"
+  randomPageCost: "1.1"
+  resources:
+    requests:
+      cpu: "6"
+      memory: "20Gi"
+  storage:
+    size: 64Gi
+    storageClassName: "managed-csi"
+
+pgcache:
+  allowedTables:
+    - product
+    - category
+    - seller
+    - customer
+    - orders
+    - order_item
+    - review
+  telemetry: "off"
+  workers: 8
+  populationWorkersMin: 4
+  memoCacheSize: "1073741824"
+  memoryLimit: "21474836480"
+  listenPort: 6432
+  metricsPort: 9090
+  resources:
+    requests:
+      cpu: "6"
+      memory: "24Gi"
+
+loadgen:
+  resources:
+    requests:
+      cpu: "6"
+      memory: "8Gi"
+  storage:
+    size: 20Gi
+    storageClassName: "managed-csi"
+
+# Pin metrics-reader onto the 1-node system pool (README.md Section 7.1)
+metricsReader:
+  nodeSelector:
+    kubernetes.azure.com/mode: system
+  tolerations:
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"

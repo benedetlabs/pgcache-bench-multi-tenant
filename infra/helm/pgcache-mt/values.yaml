@@ -21,6 +21,12 @@ netTune:
 # Optional static hostAliases mappings for bypassing CoreDNS
 hostAliases: []
 
+# Optional global nodeSelector and tolerations for benchmark pods (origin, pgcache, loadgen).
+# Used on Azure AKS to schedule benchmark pods onto the 3-node Spot user pool.
+nodeSelector: {}
+tolerations: []
+
+
 # Image definitions
 image:
   origin:
@@ -95,7 +101,10 @@ loadgen:
 
 # Metrics reader pod (for Prometheus scrape over HTTP)
 metricsReader:
+  nodeSelector: {}
+  tolerations: []
   resources:
     requests:
       cpu: "50m"
       memory: "64Mi"
+
