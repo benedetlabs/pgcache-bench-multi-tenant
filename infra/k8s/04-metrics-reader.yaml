@@ -22,7 +22,9 @@ spec:
     spec:
       # For Azure AKS with a CriticalAddonsOnly system pool (`helm-deploy.sh --aks-tuned`):
       # nodeSelector: {kubernetes.azure.com/mode: "system"}
-      # tolerations: [{key: "CriticalAddonsOnly", operator: "Exists"}]
+      tolerations:
+        - {key: "CriticalAddonsOnly", operator: "Exists"}
+        - {key: "kubernetes.azure.com/scalesetpriority", operator: "Equal", value: "spot", effect: "NoSchedule"}
       containers:
         - name: shell
           image: alpine:3.20

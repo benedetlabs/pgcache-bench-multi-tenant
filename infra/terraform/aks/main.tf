@@ -38,7 +38,13 @@ resource "azurerm_kubernetes_cluster" "aks" {
   # Azure Portal defaults to "Standard" ($0.10/hr = ~$73/month).
   # "Free" tier provides the exact same Kubernetes API server for $0.00/hr.
   sku_tier              = var.sku_tier
+  support_plan          = "KubernetesOfficial"
   cost_analysis_enabled = false
+
+  # Prevent background control-plane or node-image auto-upgrades from draining
+  # nodes or perturbing latency inside an active benchmark measurement window.
+  automatic_upgrade_channel = null
+  node_os_upgrade_channel   = "None"
 
   # ── 2. Disable All Costly Observability, Security & Policy Add-ons ────────
   # Azure Portal enables Container Insights (Log Analytics), Managed Prometheus,
@@ -108,12 +114,13 @@ resource "azurerm_kubernetes_cluster" "aks" {
 # Runs origin (PostgreSQL 17), pgcache, and loadgen (pgbench) — strictly 1 pod
 # per physical node via podAntiAffinity, all inside the same Availability Zone.
 resource "azurerm_kubernetes_cluster_node_pool" "benchmark" {
-  name                  = "benchspot"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.aks.id
-  mode                  = "User"
-  vm_size               = var.benchmark_vm_size
-  node_count            = var.benchmark_node_count
-  auto_scaling_enabled  = false
+  name                        = "benchspot"
+  kubernetes_cluster_id       = azurerm_kubernetes_cluster.aks.id
+  mode                        = "User"
+  vm_size                     = var.benchmark_vm_size
+  node_count                  = var.benchmark_node_count
+  auto_scaling_enabled        = false
+  temporary_name_for_rotation = "benchrot"
 
   # Spot configuration: ~75%-88% discount off pay-as-you-go VM rates.
   # "Delete" eviction policy ensures evicted VMs and their OS disks are deleted
@@ -139,4 +146,11 @@ resource "azurerm_kubernetes_cluster_node_pool" "benchmark" {
   }
 
   tags = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = !(var.os_disk_type == "Ephemeral" && can(regex("^Standard_[BDE][0-9]+a?l?s_v[256]$", var.benchmark_vm_size)))
+      error_message = "os_disk_type = 'Ephemeral' is not supported on diskless Azure v2/v5/v6 VM SKUs (${var.benchmark_vm_size}) which have no local temp disk or OS cache. Set os_disk_type = 'Managed' or choose a 'd'-series VM SKU with local temp storage (e.g., Standard_D8ads_v5, Standard_E4ds_v5, Standard_D4ads_v5)."
+    }
+  }
 }

@@ -37,6 +37,7 @@ This repository contains a rigorous, reproducible benchmark comparing PostgreSQL
    - For official cloud benchmark numbers, `origin`, `pgcache`, and `loadgen` MUST run on separate physical nodes/VMs (enforced via `podAntiAffinity`) within the same Availability Zone (AZ).
    - NEVER set hard CPU limits (`resources.limits.cpu`), as CFS throttling introduces p99 latency spikes indistinguishable from cache misses.
    - When using DigitalOcean Kubernetes (DOKS), provision via `./scripts/do-cluster.sh create` and tear down cluster + CSI block volumes via `./scripts/do-cluster.sh destroy` immediately after collecting artifacts to prevent idle cloud billing.
+   - When using Azure Kubernetes Service (AKS), provision the ultra-low-cost Free-tier + 3-node Single-AZ Spot stack (`infra/terraform/aks/`) via `./scripts/aks-cluster.sh create`, deploy via `./scripts/aks-cluster.sh deploy 0.7.1`, and tear down cluster + Resource Group via `./scripts/aks-cluster.sh destroy` immediately after collecting artifacts.
 2. **Docker Compose (`infra/docker-compose.yml`)**:
    - Used for local multi-version verification (`pgcache/pgcache:0.7.1-arm64` on Apple Silicon / `0.7.1` on x86_64), differential correctness gating, and complex workload evaluation.
    - Local Docker shares host CPU cores and has near-zero loopback latency; always document Docker results separately from 3-node Kubernetes (DOKS) results.

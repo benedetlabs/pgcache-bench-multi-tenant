@@ -57,17 +57,30 @@ ensure_azure_auth() {
     echo "FATAL: 'terraform' CLI not found. Install via 'brew install terraform'." >&2
     exit 1
   fi
-  if ! command -v az >/dev/null 2>&1; then
-    echo "FATAL: Azure CLI ('az') not found. Install via 'brew install azure-cli'." >&2
-    exit 1
-  fi
-  if ! az account show >/dev/null 2>&1; then
-    echo "FATAL: Azure CLI is not authenticated. Run 'az login' first." >&2
-    exit 1
-  fi
   if [ -z "${ARM_SUBSCRIPTION_ID:-}" ]; then
+    if ! command -v az >/dev/null 2>&1; then
+      echo "FATAL: Azure CLI ('az') not found and ARM_SUBSCRIPTION_ID is not set. Install via 'brew install azure-cli' or export ARM_SUBSCRIPTION_ID." >&2
+      exit 1
+    fi
+    if ! az account show >/dev/null 2>&1; then
+      echo "FATAL: Azure CLI is not authenticated. Run 'az login' first." >&2
+      exit 1
+    fi
     ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
     export ARM_SUBSCRIPTION_ID
+  fi
+}
+
+build_tf_var_args() {
+  TF_VAR_ARGS=()
+  if [ -n "${1:-}" ]; then
+    TF_VAR_ARGS+=(-var="benchmark_vm_size=$1")
+  fi
+  if [ -n "${2:-}" ]; then
+    TF_VAR_ARGS+=(-var="location=$2")
+  fi
+  if [ "${3+x}" = "x" ]; then
+    TF_VAR_ARGS+=(-var="availability_zone=$3")
   fi
 }
 
@@ -76,36 +89,41 @@ CMD="${1:-}"
 
 case "$CMD" in
   create)
-    VM_SIZE="${2:-Standard_D8as_v5}"
-    LOCATION="${3:-eastus2}"
-    ZONE="${4:-1}"
+    build_tf_var_args "${2+$2}" "${3+$3}" ${4+"$4"}
+    DISPLAY_VM="${2:-${TF_VAR_benchmark_vm_size:-Standard_D8as_v5 (or terraform.tfvars)}}"
+    DISPLAY_LOC="${3:-${TF_VAR_location:-eastus2 (or terraform.tfvars)}}"
+    DISPLAY_ZONE="${4-${TF_VAR_availability_zone:-1 (or terraform.tfvars)}}"
 
     ensure_azure_auth
 
     echo "========================================================================"
     echo " Provisioning Ultra-Low-Cost Azure AKS Benchmark Cluster (Terraform)"
     echo " Subscription:   $ARM_SUBSCRIPTION_ID"
-    echo " Region / Zone:  $LOCATION (Single Availability Zone: $ZONE)"
+    echo " Region / Zone:  $DISPLAY_LOC (Single Availability Zone: $DISPLAY_ZONE)"
     echo " Control Plane:  Free Tier (\$0.00/hr — Prometheus/Grafana/OMS disabled)"
     echo " System Pool:    1x Standard_B2als_v2 (CriticalAddonsOnly)"
-    echo " Benchmark Pool: 3x $VM_SIZE (Spot Priority, Eviction: Delete)"
+    echo " Benchmark Pool: 3x $DISPLAY_VM (Spot Priority, Eviction: Delete)"
     echo "========================================================================"
 
     terraform -chdir="$TF_DIR" init -input=false
     terraform -chdir="$TF_DIR" apply -auto-approve \
-      -var="benchmark_vm_size=$VM_SIZE" \
-      -var="location=$LOCATION" \
-      -var="availability_zone=$ZONE"
+      ${TF_VAR_ARGS[@]+"${TF_VAR_ARGS[@]}"}
 
     RG_NAME="$(terraform -chdir="$TF_DIR" output -raw resource_group_name)"
     CLUSTER_NAME="$(terraform -chdir="$TF_DIR" output -raw cluster_name)"
 
     echo ""
     echo "--> Fetching kubectl credentials for '$CLUSTER_NAME'..."
-    az aks get-credentials \
-      --resource-group "$RG_NAME" \
-      --name "$CLUSTER_NAME" \
-      --overwrite-existing
+    if command -v az >/dev/null 2>&1; then
+      az aks get-credentials \
+        --resource-group "$RG_NAME" \
+        --name "$CLUSTER_NAME" \
+        --overwrite-existing
+    else
+      mkdir -p "$HOME/.kube"
+      terraform -chdir="$TF_DIR" output -raw kube_config_raw > "$HOME/.kube/config"
+      chmod 600 "$HOME/.kube/config"
+    fi
 
     echo ""
     echo "--> Configuring privileged benchmark namespace '$NS'..."
@@ -130,22 +148,23 @@ case "$CMD" in
     ;;
 
   plan)
-    VM_SIZE="${2:-Standard_D8as_v5}"
-    LOCATION="${3:-eastus2}"
-    ZONE="${4:-1}"
+    build_tf_var_args "${2+$2}" "${3+$3}" ${4+"$4"}
 
     ensure_azure_auth
 
     terraform -chdir="$TF_DIR" init -input=false
     terraform -chdir="$TF_DIR" plan \
-      -var="benchmark_vm_size=$VM_SIZE" \
-      -var="location=$LOCATION" \
-      -var="availability_zone=$ZONE"
+      ${TF_VAR_ARGS[@]+"${TF_VAR_ARGS[@]}"}
     ;;
 
   deploy)
-    TAG="${2:-0.7.1}"
-    PROFILE="${3:---aks-tuned}"
+    if [[ "${2:-}" == --* ]]; then
+      PROFILE="$2"
+      TAG="${3:-0.7.1}"
+    else
+      TAG="${2:-0.7.1}"
+      PROFILE="${3:---aks-tuned}"
+    fi
     echo "--> Deploying benchmark to AKS with profile ($PROFILE) and PgCache tag ($TAG)..."
     "$REPO_ROOT/scripts/helm-deploy.sh" "$PROFILE" "$TAG"
     echo ""

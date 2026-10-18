@@ -104,7 +104,11 @@ DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh writes
 ## 5. Non-Destructive Results & Cloud Lifecycle Hygiene
 
 - **Preserve Prior Results**: Never overwrite or delete existing folders in `results/` (`0.6.3/`, `0.6.4/`, `0.7.0/`, `tuned/`).
-- **Cloud Cost Hygiene**: When running on DOKS, destroy the cluster and associated block storage volumes immediately after saving results to `results/`:
+- **Cloud Cost Hygiene**: When running on DOKS or Azure AKS, destroy the cluster and associated block storage volumes / Resource Group immediately after saving results to `results/`:
   ```bash
+  # DigitalOcean DOKS:
   ./scripts/do-cluster.sh destroy
+
+  # Azure AKS (Terraform Free Control Plane + 3-Node Spot Pool):
+  ./scripts/aks-cluster.sh destroy
   ```

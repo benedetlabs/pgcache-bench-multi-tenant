@@ -39,11 +39,12 @@ spec:
                 matchExpressions:
                   - {key: lab/role, operator: In, values: [origin, pgcache]}
               topologyKey: kubernetes.io/hostname
-      # For Azure AKS Spot node pools (or use `helm-deploy.sh --aks-tuned`):
+      # Tolerate Azure AKS Spot node pool taints (no-op on untainted clusters).
+      # To also require Spot node labels, uncomment nodeSelector or use `helm-deploy.sh --aks-tuned`:
       # nodeSelector:
       #   kubernetes.azure.com/scalesetpriority: spot
-      # tolerations:
-      #   - {key: kubernetes.azure.com/scalesetpriority, operator: Equal, value: spot, effect: NoSchedule}
+      tolerations:
+        - {key: kubernetes.azure.com/scalesetpriority, operator: Equal, value: spot, effect: NoSchedule}
       initContainers:
         - name: tune-net-stack
           image: busybox:1.36

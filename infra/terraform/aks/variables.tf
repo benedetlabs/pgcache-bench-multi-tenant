@@ -89,6 +89,11 @@ variable "os_disk_size_gb" {
   description = "OS disk size in GiB (30 GiB is the minimum Linux OS disk size on AKS, cutting Azure Portal's 128 GiB default OS disk cost by 76%)."
   type        = number
   default     = 30
+
+  validation {
+    condition     = var.os_disk_size_gb >= 30 && var.os_disk_size_gb <= 2048
+    error_message = "os_disk_size_gb must be at least 30 GiB (the minimum Linux OS disk size supported by Azure AKS)."
+  }
 }
 
 variable "tags" {

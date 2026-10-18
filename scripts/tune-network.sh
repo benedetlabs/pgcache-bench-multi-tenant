@@ -15,7 +15,7 @@ echo "=== Verifying Cluster Pods & Node Distribution ==="
 kubectl -n "$NS" get pods -o wide
 
 # Ensure all 3 benchmark pods are running
-for pod in origin-0 deploy/pgcache deploy/loadgen; do
+for pod in statefulset/origin deploy/pgcache deploy/loadgen; do
   echo "--> Waiting for $pod to be ready..."
   kubectl -n "$NS" rollout status "$pod" --timeout=3m 2>/dev/null || true
 done
