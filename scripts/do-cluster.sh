@@ -119,7 +119,7 @@ case "$CMD" in
     ;;
 
   deploy)
-    TAG="${2:-0.7.0}"
+    TAG="${2:-0.7.1}"
     PROFILE="${3:---do-tuned}"
     echo "--> Deploying benchmark to current cluster with DigitalOcean profile ($PROFILE)..."
     "$REPO_ROOT/scripts/helm-deploy.sh" "$PROFILE" "$TAG"

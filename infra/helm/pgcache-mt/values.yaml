@@ -29,7 +29,7 @@ image:
     pullPolicy: IfNotPresent
   pgcache:
     repository: pgcache/pgcache
-    tag: "0.7.0"
+    tag: "0.7.1"
     pullPolicy: IfNotPresent
   loadgen:
     repository: postgres

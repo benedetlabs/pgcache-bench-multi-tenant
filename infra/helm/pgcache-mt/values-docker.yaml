@@ -12,7 +12,7 @@ hostNetwork:
 # Default to ARM64 tag on Apple Silicon / macOS Docker environments
 image:
   pgcache:
-    tag: "0.7.0-arm64"
+    tag: "0.7.1-arm64"
 
 # Origin PostgreSQL configuration sized for local containers
 origin:

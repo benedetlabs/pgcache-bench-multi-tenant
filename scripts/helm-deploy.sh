@@ -27,7 +27,7 @@ usage() {
 }
 
 MODE="${1:-}"
-TAG="${2:-0.7.0}"
+TAG="${2:-0.7.1}"
 [ -z "$MODE" ] && usage
 
 case "$MODE" in

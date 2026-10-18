@@ -68,24 +68,26 @@ pgcache_ip() {
   kubectl -n "$NS" get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}'
 }
 
-# Prints: <cumulative_hits> <cumulative_misses>
+# Prints: <cumulative_hits> <cumulative_misses> <cumulative_mv_fallthrough>
 # Counters are cumulative since the PgCache process started, so callers take a
 # DELTA around the measured window rather than reading them absolutely.
 scrape() {
   if [ "$BENCH_ENV" = "docker" ]; then
     if curl -sf --connect-timeout 5 http://127.0.0.1:59090/metrics >/tmp/metrics.scrape.$$ 2>/dev/null && grep -q "pgcache_queries_" /tmp/metrics.scrape.$$; then
-      awk '/^pgcache_queries_cache_hit /  {h=$2}
-           /^pgcache_queries_cache_miss / {m=$2}
-           END { print h+0, m+0 }' /tmp/metrics.scrape.$$
+      awk '/^pgcache_queries_cache_hit /     {h=$2}
+           /^pgcache_queries_cache_miss /    {m=$2}
+           /^pgcache_cache_mv_fallthrough /  {f=$2}
+           END { print h+0, m+0, f+0 }' /tmp/metrics.scrape.$$
       rm -f /tmp/metrics.scrape.$$
     else
       local out
       out=$(docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T metrics-reader \
         sh -c "wget -qO- --timeout=20 http://pgcache:9090/metrics" 2>/dev/null || true)
       if [ -n "$out" ] && echo "$out" | grep -q "pgcache_queries_"; then
-        echo "$out" | awk '/^pgcache_queries_cache_hit /  {h=$2}
-                           /^pgcache_queries_cache_miss / {m=$2}
-                           END { print h+0, m+0 }'
+        echo "$out" | awk '/^pgcache_queries_cache_hit /     {h=$2}
+                           /^pgcache_queries_cache_miss /    {m=$2}
+                           /^pgcache_cache_mv_fallthrough /  {f=$2}
+                           END { print h+0, m+0, f+0 }'
       else
         die "could not scrape pgcache metrics in docker"
       fi
@@ -109,9 +111,10 @@ scrape() {
       sleep 1
     done
     [ -n "$out" ] || die "failed to scrape pgcache metrics from metrics-reader (port $mport)"
-    echo "$out" | awk '/^pgcache_queries_cache_hit /  {h=$2}
-                       /^pgcache_queries_cache_miss / {m=$2}
-                       END { print h+0, m+0 }'
+    echo "$out" | awk '/^pgcache_queries_cache_hit /     {h=$2}
+                       /^pgcache_queries_cache_miss /    {m=$2}
+                       /^pgcache_cache_mv_fallthrough /  {f=$2}
+                       END { print h+0, m+0, f+0 }'
   fi
 }
 
@@ -132,7 +135,7 @@ run() {
   local out
   out=$(ex "pgbench -h $host -p $port -U \$PGUSER -n -c $CLIENTS -j $threads -T $secs $* \$PGDATABASE" 2>&1) \
     || die "pgbench failed: $(echo "$out" | tail -3)"
-  echo "$out" | awk '/^latency average/{l=$4} /^tps/{printf "%s %.0f", l, $3}'
+  echo "$out" | awk 'BEGIN{l="0.000"; t=0} /^latency average/{if($4!="" && $4!="NaN") l=$4} /^tps/{if($3!="" && $3!="NaN") t=$3} END{printf "%s %.0f\n", l, t}'
 }
 
 # ── Warm-up ────────────────────────────────────────────────────────────────
@@ -148,30 +151,56 @@ run() {
 # 19.5% hit ratio and lose by 42%; with adequate warm-up the same cell reaches
 # 100% and wins by 38%.
 #
-# The settling threshold is one percentage point between consecutive passes.
+# In PgCache 0.7+, table-level subsumption increments pgcache_queries_cache_hit
+# even while new queries' Materialized Views are still building via
+# pgcache_cache_mv_fallthrough. We therefore measure effective MV/memo hit rate
+# ((hits - mv_fallthrough) / (hits + misses)) so warm-up continues until both
+# base-table population AND MV construction have settled within 1%.
 warm_until_settled() {
   local host="$1" port="$2"; shift 2
-  local prev=0 cur h0 m0 h1 m1 p
-  for p in 1 2 3 4 5; do
-    read -r h0 m0 <<<"$(scrape)"
+  local prev=-1 cur h0 m0 f0 h1 m1 f1 p
+  local max_passes="${MAX_WARM_PASSES:-6}"
+  for p in $(seq 1 "$max_passes"); do
+    read -r h0 m0 f0 <<<"$(scrape)"
     run "$host" "$port" "$DURATION" "$@" >/dev/null
-    read -r h1 m1 <<<"$(scrape)"
-    cur=$(awk -v h=$((h1-h0)) -v m=$((m1-m0)) 'BEGIN{printf "%.4f", (h+m)?h/(h+m):0}')
-    if awk -v c="$cur" -v q="$prev" 'BEGIN{exit !(c-q < 0.01 && c-q > -0.01)}'; then
+    read -r h1 m1 f1 <<<"$(scrape)"
+    cur=$(awk -v h=$((h1-h0)) -v m=$((m1-m0)) -v f=$((f1-f0)) 'BEGIN{eh=h-f; if(eh<0)eh=0; printf "%.4f", (h+m)?eh/(h+m):0}')
+    if awk -v c="$cur" -v q="$prev" 'BEGIN{exit !(q >= 0 && c > 0.05 && c-q < 0.01 && c-q > -0.01)}'; then
       echo "$p"; return 0
     fi
     prev="$cur"
   done
-  echo 5
+  echo "$max_passes"
+}
+
+# ── Reset PgCache ──────────────────────────────────────────────────────────
+#
+# Cleanly recreates the pgcache container in Docker mode so that SysV shared
+# memory segments (pgcache_pgrx DSA) and registered MVs from a prior suite are
+# released before starting an independent scenario sweep.
+reset_pgcache() {
+  if [ "$BENCH_ENV" = "docker" ]; then
+    docker compose -f "$REPO_ROOT/infra/docker-compose.yml" up -d --force-recreate pgcache >/dev/null 2>&1
+    local tries=0
+    while [ $tries -lt 30 ]; do
+      if curl -sf --connect-timeout 2 http://127.0.0.1:59090/metrics >/dev/null 2>&1 && \
+         ex "pg_isready -h \$PGCACHE_HOST -p \$PGCACHE_PORT -U \$PGUSER -d \$PGDATABASE >/dev/null 2>&1"; then
+        sleep 1
+        return 0
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
+  fi
 }
 
 # ── Ensure Workload Scripts ────────────────────────────────────────────────
 ensure_workload_scripts() {
   if [ "$BENCH_ENV" = "k8s" ]; then
-    if ! kubectl -n "$NS" exec deploy/loadgen -- test -f /tmp/mt/dashboard.sql 2>/dev/null; then
+    if ! kubectl -n "$NS" exec deploy/loadgen -- test -f /tmp/mt/complex-dashboard.sql 2>/dev/null; then
       echo "--> Workload scripts missing in loadgen pod; restoring..." >&2
       kubectl -n "$NS" exec deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
-      for f in dashboard write; do
+      for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard; do
         if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
           kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
         fi
@@ -188,23 +217,23 @@ ensure_workload_scripts() {
 cell() {
   ensure_workload_scripts
   local label="$1"; shift
-  local a b h0 m0 h1 m1 warm
+  local a b h0 m0 f0 h1 m1 f1 warm
 
   a=$(run '$ORIGIN_HOST' '$ORIGIN_PORT' "$DURATION" "$@")
   warm=$(warm_until_settled '$PGCACHE_HOST' '$PGCACHE_PORT' "$@")
 
-  read -r h0 m0 <<<"$(scrape)"
+  read -r h0 m0 f0 <<<"$(scrape)"
   b=$(run '$PGCACHE_HOST' '$PGCACHE_PORT' "$DURATION" "$@")
-  read -r h1 m1 <<<"$(scrape)"
+  read -r h1 m1 f1 <<<"$(scrape)"
 
   local a_lat a_rps b_lat b_rps
   read -r a_lat a_rps <<<"$a"
   read -r b_lat b_rps <<<"$b"
 
   printf '%-9s %9s %6s %10s %6s %7.1f%% %+7.0f%% %5s\n' \
-    "$label" "$a_lat" "$a_rps" "$b_lat" "$b_rps" \
+    "$label" "${a_lat:-0.000}" "${a_rps:-0}" "${b_lat:-0.000}" "${b_rps:-0}" \
     "$(awk -v h=$((h1-h0)) -v m=$((m1-m0)) 'BEGIN{print (h+m)?100*h/(h+m):0}')" \
-    "$(awk -v x="$a_rps" -v y="$b_rps" 'BEGIN{print (x>0)?100*(y/x-1):0}')" \
+    "$(awk -v x="${a_rps:-0}" -v y="${b_rps:-0}" 'BEGIN{print (x+0>0)?100*((y+0)/(x+0)-1):0}')" \
     "$warm"
 }
 

@@ -41,7 +41,7 @@ services:
     shm_size: 2gb
 
   pgcache:
-    image: ${PGCACHE_IMAGE:-pgcache/pgcache:0.7.0-arm64}
+    image: ${PGCACHE_IMAGE:-pgcache/pgcache:0.7.1-arm64}
     depends_on:
       origin: {condition: service_healthy}
     shm_size: 2gb

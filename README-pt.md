@@ -31,6 +31,7 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 13. [Varredura 2 — separando cache de saturação](#13-varredura-2--separando-cache-de-saturação)
 14. [Varredura 3 — escrita](#14-varredura-3--escrita)
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
+   - [15.1 Varredura 4 — cenários complexos de SaaS multi-tenant (PgCache 0.7.1)](#151-varredura-4--cenários-complexos-de-saas-multi-tenant-pgcache-071)
 16. [O que isto não prova](#16-o-que-isto-não-prova)
 17. [Apêndice: todos os arquivos](#17-apêndice-todos-os-arquivos)
 
@@ -40,21 +41,28 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 
 Duas coisas num repositório só.
 
-**Uma ferramenta.** Um benchmark que modela um dashboard de SaaS multi-tenant
-contra o PostgreSQL, com e sem um cache de leitura na frente, e mede a diferença
-em três eixos: número de tenants, concorrência e proporção de escrita.
+**Uma ferramenta.** Um benchmark que modela tanto um dashboard operacional leve
+de SaaS multi-tenant (`workload/dashboard.sql`) quanto telas corporativas
+complexas — busca textual por substring (`ILIKE '%...%'`), cadeias profundas de
+4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN`, e agregações analíticas
+multidimensionais (`GROUP BY`, `FILTER (WHERE ...)`, `CASE WHEN`, `HAVING`) —
+contra o PostgreSQL, com e sem um cache de leitura na frente, em três eixos:
+número de tenants, concorrência e proporção de escrita.
 
 **Um relato.** A história completa de rodá-lo — por que cada decisão foi tomada
 do jeito que foi, no que os números deram, e os erros cometidos no caminho.
 Escrito para quem nunca viu isto antes; nada assume contexto prévio.
 
 **O resultado, em uma linha:** o cache respondeu um dashboard de oito statements
-entre **6,4× e 12,6× mais rápido** que o banco sem cache, com **100% de taxa de
-acerto em todas as células**, e a vantagem sobreviveu a 10% de escrita.
+entre **6,4× e 12,6× mais rápido** que o banco sem cache (e **44× a 108× mais
+rápido** em cargas complexas de 4 a 6 tabelas aceleradas por Materialized Views
+no PgCache `0.7.1`), com **100% de taxa de acerto** em cargas de leitura
+estabilizadas.
 
-A seção 16 é onde esse número deve parar de ser esticado. Uma coisa em
-particular: **nunca rodamos um gate de correção diferencial contra esta carga**,
-e até que isso aconteça, todo número aqui carrega esse asterisco.
+A seção 16 é onde esse número deve parar de ser esticado. Enquanto a campanha
+original publicou sem um gate de correção diferencial, [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
+agora valida igualdade byte a byte de saída (`Origin == PgCache`), `pgcache_queries_uncacheable == 0`
+e admissão no gate de Materialized Views (`results/0.7.1/verify-correctness.txt`).
 
 O cache testado é o [PgCache](https://www.pgcache.com). Nada aqui tem vínculo com
 ele — é uma medição independente, inclusive nas partes desfavoráveis.
@@ -81,10 +89,14 @@ kubectl -n pgcache-mt get pods -o wide
 # SCALE=5 ./scripts/00-setup.sh      # ~2,3 GB (2,5M pedidos, 10M itens)
 # SCALE=10 ./scripts/00-setup.sh     # ~4,6 GB (5,0M pedidos, 20M itens)
 
-# 4. As três varreduras. 15 a 25 minutos cada.
+# 4. Roda o gate diferencial de correção, cacheabilidade e admissão de MVs.
+./scripts/verify-correctness.sh
+
+# 5. As varreduras baseline (01-03) e os cenários complexos multi-tenant (04).
 ./scripts/01-tenant-sweep.sh      | tee data/run-tenants.txt
 ./scripts/02-concurrency-sweep.sh | tee data/run-clients.txt
 ./scripts/03-write-sweep.sh       | tee data/run-writes.txt
+./scripts/04-complex-sweep.sh all | tee data/run-complex.txt
 ```
 
 Antes de acreditar em qualquer saída, confira duas coisas:
@@ -112,36 +124,36 @@ Você pode fazer o deploy no Kubernetes ou Docker Desktop usando o Helm chart em
 # Cluster Kubernetes de produção (3 nós dedicados):
 helm install pgcache-mt infra/helm/pgcache-mt \
   --namespace pgcache-mt --create-namespace \
-  --set image.pgcache.tag="0.7.0"
+  --set image.pgcache.tag="0.7.1"
 
 # Clusters de produção ARM64 (ex: AWS Graviton):
 helm install pgcache-mt infra/helm/pgcache-mt \
   --namespace pgcache-mt --create-namespace \
-  --set image.pgcache.tag="0.7.0-arm64"
+  --set image.pgcache.tag="0.7.1-arm64"
 
 # Kubernetes local no Docker (Docker Desktop / kind / k3d):
-./scripts/helm-deploy.sh --docker 0.7.0-arm64
+./scripts/helm-deploy.sh --docker 0.7.1-arm64
 # Ou manualmente com Helm:
 helm install pgcache-mt infra/helm/pgcache-mt \
   -f infra/helm/pgcache-mt/values-docker.yaml \
   --namespace pgcache-mt --create-namespace \
-  --set image.pgcache.tag="0.7.0-arm64"
+  --set image.pgcache.tag="0.7.1-arm64"
 
 # Cluster DigitalOcean de baixo custo com 3 nós (~$0,21/hora total, plano de controle grátis com --ha=false):
 ./scripts/do-cluster.sh create
-./scripts/do-cluster.sh deploy 0.7.0
+./scripts/do-cluster.sh deploy 0.7.1
 # Ao finalizar, destrua o cluster e todos os volumes associados:
 ./scripts/do-cluster.sh destroy
 ```
 
 ### Resultados de múltiplas versões e verificação local no Docker
 
-Os resultados de verificação do benchmark estruturados por tag de versão (`0.6.3`, `0.6.4` e `0.7.0`) estão disponíveis na pasta [`results/`](results/) com relatórios dedicados em inglês e português.
+Os resultados de verificação do benchmark estruturados por tag de versão (`0.6.3`, `0.6.4`, `0.7.0` e `0.7.1`) estão disponíveis na pasta [`results/`](results/) com relatórios dedicados em inglês e português.
 
 Para rodar a verificação local no Docker para qualquer tag:
 
 ```bash
-./scripts/run-tag-verification.sh 0.7.0 5
+./scripts/run-tag-verification.sh 0.7.1 5
 ```
 
 ---
@@ -1065,28 +1077,73 @@ Isso também explica por que tantos benchmarks de banco acham caches
 decepcionantes. Eles rodam lookups por chave primária, que são a **última linha**
 daquela tabela. **A consulta mais barata é o pior caso de um cache.**
 
+### 15.1 Varredura 4 — Cenários Complexos de SaaS Multi-Tenant (PgCache 0.7.1)
+
+**Script: [`scripts/04-complex-sweep.sh`](scripts/04-complex-sweep.sh)**  
+**Cargas: [`complex-search.sql`](workload/complex-search.sql), [`complex-joins.sql`](workload/complex-joins.sql), [`complex-analytics.sql`](workload/complex-analytics.sql), [`complex-dashboard.sql`](workload/complex-dashboard.sql)**  
+**Relatório: [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md)**
+
+Para testar o corolário dessa regra — o que acontece quando um SaaS multi-tenant
+executa telas relacionais genuinamente pesadas — expandimos o benchmark com quatro
+suítes de carga complexa avaliadas no **PgCache `0.7.1`**:
+
+1. **Busca Textual por Substring (`complex-search.sql`)**: 4 statements combinando buscas `ILIKE '%...%'` em e-mails/nomes de clientes, nomes de produtos, vendedores e textos de avaliações com cadeias de `INNER JOIN` e `LEFT JOIN` de 2 a 4 tabelas.
+2. **Joins Profundos Multi-Tabela (`complex-joins.sql`)**: 4 statements percorrendo cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN` (`orders -> customer -> order_item -> product -> category -> seller -> review`), preservando coortes de clientes sem pedidos (`LEFT JOIN orders`) e estoque de produtos sem avaliação (`LEFT JOIN review`).
+3. **Análises Multidimensionais (`complex-analytics.sql`)**: 4 statements executando `GROUP BY` multicoluna, `FILTER (WHERE ...)` condicional, faixas `CASE WHEN` de atendimento e preço, e filtros pós-agregação `HAVING`.
+4. **Tela Analítica e de Busca Unificada (`complex-dashboard.sql`)**: Tela corporativa de 8 statements combinando 2 consultas de busca textual, 3 joins profundos multi-tabela (`JOIN` / `LEFT JOIN`) e 3 agregações analíticas pesadas.
+
+#### Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8`, Docker Local)
+
+| Cenário | Statements | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
+|---|---:|---|---|---:|---:|---:|---:|
+| **`dash_base`** (`dashboard.sql`) | 8 | 40,57 ms · 197 rps | **17,11 ms · 468 rps** | **+138%** | **2,4×** | 100,0% | 3 |
+| **`search`** (`complex-search.sql`) | 4 | 98,50 ms · 81 rps | **1,34 ms · 5.982 rps** | **+7.285%** | **73,9×** | 100,0% | 4 |
+| **`joins`** (`complex-joins.sql`) | 4 | 131,70 ms · 61 rps | **1,36 ms · 5.902 rps** | **+9.575%** | **96,8×** | 100,0% | 5 |
+| **`analytics`** (`complex-analytics.sql`) | 4 | 95,76 ms · 84 rps | **1,31 ms · 6.118 rps** | **+7.183%** | **72,8×** | 100,0% | 4 |
+| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 217,38 ms · 37 rps | **2,73 ms · 2.928 rps** | **+7.814%** | **79,1×** | 100,0% | 6 |
+
+#### Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200`, Docker Local)
+
+| Clientes | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---:|---:|---:|
+| **1** | 86,03 ms · 12 rps | **1,90 ms · 528 rps** | **+4.300%** | **44,0×** | 100,0% | 3 |
+| **4** | 140,95 ms · 28 rps | **2,38 ms · 1.679 rps** | **+5.896%** | **60,0×** | 100,0% | 2 |
+| **8** | 286,37 ms · 28 rps | **2,84 ms · 2.814 rps** | **+9.950%** | **100,5×** | 100,0% | 2 |
+| **16** | 525,68 ms · 30 rps | **4,94 ms · 3.239 rps** | **+10.697%** | **108,0×** | 100,0% | 2 |
+| **32** | 983,51 ms · 33 rps | **9,82 ms · 3.260 rps** | **+9.779%** | **98,8×** | 100,0% | 2 |
+
+#### Duas Descobertas Arquiteturais das Varreduras Complexas
+
+1. **Cache em Dois Estágios no PgCache `0.7.1` (Subsunção de Tabelas vs. Gate de Admissão de Materialized Views)**:
+   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`17,11 ms` vs `40,57 ms`, **2,4× mais rápido**).
+   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{result="admitted"} == 8/8`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes em **~0,33 ms por statement** (`2,73 ms` para 8 statements contra `217,38 ms` na Origem — **79,1× mais rápido** com 8 clientes e **108,0× mais rápido** com 16 clientes).
+2. **Onde as Materialized Views Complexas Encontram Seus Limites (Taxa de Registro no Cold-Start e Custo de Rebuild em Escritas)**:
+   - **Gate de Registro no Cold-Start (`pgcache_cache_reg_gate_rate`)**: Em 500–1.000 tenants sobre `complex-dashboard.sql`, o PgCache limita o registro de novas MVs a ~8–20 consultas/s para proteger a origem contra tempestades de `CREATE MATERIALIZED VIEW`, aquecendo ~175 tenants (`35,2%` / `17,5%` de hit) dentro de uma janela fria de 90s.
+   - **Custo de Rebuild de MVs Multi-Tabela sob Escrita (`pgcache_cache_mv_rebuilds`)**: Enquanto `dashboard.sql` sustenta ganhos de `+40%` a `+110%` sob 5%–10% de tráfego `UPDATE orders`, 7 dos 8 statements em `complex-dashboard.sql` fazem join de `orders` entre 4 a 6 tabelas. Instruções contínuas de `UPDATE orders` invalidam essas MVs e disparam rebuilds completos de 6 tabelas (~50–100 ms cada no PostgreSQL embutido), causando regressão de vazão (`-68%` a `-93%`), exceto quando as escritas estão concentradas em um único tenant quente enquanto a Origem está saturada (`10:1`, onde o PgCache vence por **`+62%`**). Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
+
 ---
 
 ## 16. O que isto não prova
 
-Cinco limites, e o primeiro é sério.
+Cinco limites que valem ser mantidos em vista.
 
-### O gate de correção não rodou nesta carga
+### O gate de correção: originalmente ausente, agora aplicado na `0.7.1`
 
 Outras campanhas deste laboratório bloqueavam a publicação de qualquer número de
 desempenho até comparar, consulta a consulta, a resposta da origem com a do
-cache. **Esta publicou sem isso.**
+cache. **A campanha original publicou sem isso.**
 
 Aqueles gates sempre passaram — milhares de comparações em três sujeitos, zero
 divergências, incluindo um teste que amostrou leituras *enquanto* escritas
 estavam em voo e achou 1.931 comparações conclusivas, nenhuma divergente.
 
-Mas esta carga contém formas que aqueles gates nunca exercitaram: joins de duas
-tabelas, `GROUP BY` com `ORDER BY`, paginação com `OFFSET`. É precisamente onde
-uma divergência seria mais plausível, e está sem teste.
-
-**Rodar um gate diferencial contra esta carga é o item pendente.** Até lá, todo
-número aqui está sujeito a ele.
+Para fechar essa lacuna tanto nas formas simples quanto nas consultas complexas
+multi-tenant (cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN`, busca
+textual `ILIKE '%...%'`, `GROUP BY` com `FILTER`/`CASE`/`HAVING` e limites com
+`ORDER BY`), adicionamos [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
+e o executamos contra o PgCache `0.7.1` ([`results/0.7.1/verify-correctness.txt`](results/0.7.1/verify-correctness.txt)):
+- **8/8 consultas complexas** retornaram linhas idênticas byte a byte entre Origem e PgCache nos Passes 1 e 2.
+- **Delta de `pgcache_queries_uncacheable` = `0`** (`16/16` cacheáveis) e **`pgcache_cache_mv_gate` admitidas = `8/8`**.
 
 ### Só latência média
 
@@ -1110,9 +1167,11 @@ diz o que acontece quando o conjunto de dados excede a memória da origem.
 
 ### Duzentos tenants não são vinte mil
 
-A curva ficou plana de 1 a 200. Nada garante que continue plana em 20.000, onde o
-espaço de consultas é duas ordens de grandeza maior. **A planura desta curva não
-é licença para extrapolar.**
+A curva ficou plana de 1 a 200 (e até 2.000 no DOKS para `dashboard.sql`). Nada
+garante que continue plana em 20.000, onde o espaço de consultas é uma ordem de
+grandeza maior — e como a seção 15.1 mostrou, Materialized Views complexas
+multi-tabela já encontram limites de taxa de registro no cold-start em 500–1.000
+tenants. **A planura da curva baseline não é licença para extrapolar.**
 
 ### Não há cache de aplicação na comparação
 
@@ -1132,6 +1191,12 @@ veredito de adoção.**
 pgcache-multi-tenant/
 ├── README.md                        versão em inglês
 ├── README-pt.md                     este documento
+├── AGENTS.md                        diretrizes do repositório e time de 3 skills
+├── .agents/
+│   └── skills/
+│       ├── pgcache-benchmark/       Skill Coordenador de Benchmark
+│       ├── pgcache-complex-scenarios/ Skill de SQL complexo e gate de correção
+│       └── pgcache-metrics-analyst/ Skill de Telemetria e Lei de Amdahl
 ├── infra/
 │   ├── k8s/
 │   │   ├── 00-namespace-and-secret.yaml
@@ -1146,14 +1211,20 @@ pgcache-multi-tenant/
 │   ├── 01-schema.sql                7 tabelas, seed, índices estilo ORM
 │   └── 02-tenant.sql                denormalização do tenant_id + índices
 ├── workload/
-│   ├── dashboard.sql                a requisição de 8 statements
-│   └── write.sql                    a escrita, com :wtenants
+│   ├── dashboard.sql                a requisição operacional de 8 statements
+│   ├── write.sql                    a escrita, com :wtenants
+│   ├── complex-search.sql           4 statements de busca ILIKE '%...%' + JOIN
+│   ├── complex-joins.sql            4 statements de JOIN e LEFT JOIN em 4 a 6 tabelas
+│   ├── complex-analytics.sql        4 statements de GROUP BY / FILTER / CASE / HAVING
+│   └── complex-dashboard.sql        tela unificada com 8 statements analíticos e busca
 ├── scripts/
-│   ├── lib.sh                       scrape, run, warm_until_settled, cell
+│   ├── lib.sh                       scrape, run, warm_until_settled, reset_pgcache, cell
 │   ├── 00-setup.sh                  aplica o esquema, copia a carga para o pod
 │   ├── 01-tenant-sweep.sh
 │   ├── 02-concurrency-sweep.sh
 │   ├── 03-write-sweep.sh
+│   ├── 04-complex-sweep.sh          varreduras de cenários complexos, tenants, clientes e escrita
+│   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
 │   └── run-tag-verification.sh      script automatizado de verificação por tag
 ├── data/
 │   └── results.tsv                  as 15 células, legível por máquina
@@ -1162,7 +1233,9 @@ pgcache-multi-tenant/
     ├── README-pt.md                 comparação entre versões (português)
     ├── 0.6.3/                       resultados para PgCache 0.6.3
     ├── 0.6.4/                       resultados para PgCache 0.6.4
-    └── 0.7.0/                       resultados para PgCache 0.7.0
+    ├── 0.7.0/                       resultados para PgCache 0.7.0
+    ├── 0.7.1/                       resultados e cenários complexos para PgCache 0.7.1
+    └── tuned/                       resultados do perfil otimizado de rede e engine
 ```
 
 ### Uma nota sobre os scripts

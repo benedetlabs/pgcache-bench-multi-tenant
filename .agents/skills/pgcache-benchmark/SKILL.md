@@ -1,21 +1,30 @@
 ---
 name: pgcache-benchmark
 description: >-
-  Use this skill when running, preparing, reproducing, or validating benchmarks in the
-  pgcache-bench-multi-tenant repository, including Kubernetes environment pre-flight
-  checks, seeding data, executing sweeps (tenant, concurrency, write), and collecting metrics.
+  Use this skill when coordinating, running, preparing, reproducing, or validating
+  benchmarks in the pgcache-bench-multi-tenant repository across Local Docker or
+  3-node Kubernetes (DOKS), including pre-flight checks, seeding data, executing
+  baseline and complex multi-tenant sweeps (01-04), and collecting metrics.
 ---
 
-# PgCache Multi-Tenant Benchmark Runbook
+# PgCache Multi-Tenant Benchmark Coordinator Runbook
 
-This skill provides step-by-step procedures for running, reproducing, and validating benchmark measurements.
+This skill defines the workflow for the **Benchmark Coordinator Agent**, responsible for orchestrating end-to-end benchmark campaigns across Local Docker (`pgcache/pgcache:0.7.1-arm64` / `0.7.1`) and 3-node Kubernetes (DOKS), coordinating with [`pgcache-complex-scenarios`](../pgcache-complex-scenarios/SKILL.md) and [`pgcache-metrics-analyst`](../pgcache-metrics-analyst/SKILL.md).
 
-## Pre-flight Environment Checks
+## 1. Pre-flight Environment Checks
 
-Before starting any measurement sweep, verify pod placement and spot node preemption events:
-
+### Option A: Local Docker Environment (`BENCH_ENV=docker`)
 ```bash
-# 1. Verify that the 3 pods landed on distinct nodes within the same AZ
+# 1. Start Docker Compose with PgCache 0.7.1 (use -arm64 on Apple Silicon)
+PGCACHE_IMAGE=pgcache/pgcache:0.7.1-arm64 docker compose -f infra/docker-compose.yml up -d
+
+# 2. Verify metrics endpoint is reachable
+curl -sf http://127.0.0.1:59090/metrics | grep -E "^pgcache_queries_"
+```
+
+### Option B: 3-Node Kubernetes / DOKS (`BENCH_ENV=k8s`)
+```bash
+# 1. Verify that the 3 core pods landed on 3 distinct nodes within the same AZ
 kubectl -n pgcache-mt get pods -o wide
 kubectl get nodes -L topology.kubernetes.io/zone
 
@@ -23,48 +32,79 @@ kubectl get nodes -L topology.kubernetes.io/zone
 kubectl -n pgcache-mt get events --sort-by=.lastTimestamp | grep -iE 'preempt|evict|NodeNotReady'
 ```
 
-## Step 1: Database Setup and Seeding
+> **Configuration Invariant**: When setting `MEMO_CACHE_SIZE` (e.g., in `infra/helm/pgcache-mt/values-do-tuned.yaml`), ALWAYS pass a raw integer byte string such as `"1073741824"` (1 GiB), never `"1GB"` or `"1Gi"`.
 
-Run database schema creation, tenant denormalization, and seed data setup against the origin:
+## 2. Database Setup and Seeding
+
+Run database schema creation, tenant denormalization, and seed data setup against the origin (`$ORIGIN_HOST`):
 
 ```bash
-# Default scale (~463 MB in-memory baseline):
-./scripts/00-setup.sh
+# Local Docker (1,000 tenants, Scale 1 -> ~463 MB):
+DOCKER=1 TENANTS=1000 ./scripts/00-setup.sh
+
+# Kubernetes (default 200 tenants or 2,000 tenants):
+TENANTS=2000 ./scripts/00-setup.sh
 
 # Larger datasets (e.g. Scale 5 -> ~2.3 GB; Scale 10 -> ~4.6 GB):
 SCALE=5 ./scripts/00-setup.sh
-SCALE=10 TENANTS=500 ./scripts/00-setup.sh
-
-# Force re-seed:
-FORCE=1 SCALE=5 ./scripts/00-setup.sh
 ```
 
-This applies `sql/01-schema.sql` (scaled via `-v scale`), denormalizes `tenant_id` via `sql/02-tenant.sql`, and copies the workload scripts to `/tmp/mt/` inside the `loadgen` pod.
+## 3. Differential Correctness & Cacheability Gate
 
-## Step 2: Running Benchmark Sweeps
+Before running long benchmark sweeps, always run the correctness & cacheability gate (maintained by `pgcache-complex-scenarios`):
 
-Run the desired sweep scripts (each takes ~15–25 minutes):
+```bash
+DOCKER=1 ./scripts/verify-correctness.sh
+```
 
-1. **Sweep 1: Tenant Count Sweep (1, 10, 50, 200)**:
+This verifies that:
+1. Every complex query returns byte-for-byte identical rows from Origin and PgCache (both on cache miss and cache hit).
+2. `pgcache_queries_uncacheable` delta is `0` and `pgcache_queries_cache_error` delta is `0`.
+
+## 4. Running Benchmark Sweeps
+
+### A. Automated Full Tag Verification (Local Docker)
+Runs baseline sweeps (`01`–`03`) plus complex multi-tenant sweeps (`04`) and saves all artifacts under `results/<tag>/`:
+
+```bash
+./scripts/run-tag-verification.sh 0.7.1 5
+```
+
+### B. Individual Baseline Sweeps (`workload/dashboard.sql` & `workload/write.sql`)
+1. **Sweep 1: Tenant Count Sweep**:
    ```bash
    ./scripts/01-tenant-sweep.sh | tee data/run-tenants.txt
    ```
-2. **Sweep 2: Client Concurrency Sweep (1, 4, 8, 16, 32)**:
+2. **Sweep 2: Client Concurrency Sweep**:
    ```bash
    ./scripts/02-concurrency-sweep.sh | tee data/run-clients.txt
    ```
-3. **Sweep 3: Write Ratio and Concentration Sweep (0%, 5%, 10%)**:
+3. **Sweep 3: Write Ratio and Concentration Sweep**:
    ```bash
    ./scripts/03-write-sweep.sh | tee data/run-writes.txt
    ```
 
-## Step 3: Metrics Validation and Results Collection
+### C. Complex Multi-Tenant Sweeps (`scripts/04-complex-sweep.sh`)
+Evaluates text search (`complex-search.sql`), 4–6 table `JOIN` & `LEFT JOIN` chains (`complex-joins.sql`), heavy analytical aggregations (`complex-analytics.sql`), and the unified 8-statement complex screen (`complex-dashboard.sql`):
 
-1. Confirm that warmup reached stability (< 1% hit ratio variance between consecutive passes):
-   - Handled dynamically by `warm_until_settled` in `scripts/lib.sh`.
-2. To manually scrape PgCache Prometheus metrics:
-   ```bash
-   kubectl -n pgcache-mt exec deploy/metrics-reader -- \
-     wget -qO- http://$(kubectl -n pgcache-mt get pod -l app=pgcache -o jsonpath='{.items[0].status.podIP}'):9090/metrics
-   ```
-3. Update or compare results against `data/results.tsv`.
+```bash
+# Compare all 5 scenario families side-by-side:
+DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh scenarios
+
+# Sweep active tenants (1..1000) on complex-dashboard.sql:
+DOCKER=1 ./scripts/04-complex-sweep.sh tenants
+
+# Sweep client concurrency (1..32) on complex-dashboard.sql:
+DOCKER=1 TENANTS=1000 ./scripts/04-complex-sweep.sh clients
+
+# Sweep write ratios (0%, 5%, 10%) on complex-dashboard.sql:
+DOCKER=1 TENANTS=1000 ./scripts/04-complex-sweep.sh writes
+```
+
+## 5. Non-Destructive Results & Cloud Lifecycle Hygiene
+
+- **Preserve Prior Results**: Never overwrite or delete existing folders in `results/` (`0.6.3/`, `0.6.4/`, `0.7.0/`, `tuned/`).
+- **Cloud Cost Hygiene**: When running on DOKS, destroy the cluster and associated block storage volumes immediately after saving results to `results/`:
+  ```bash
+  ./scripts/do-cluster.sh destroy
+  ```

@@ -2,13 +2,14 @@
 
 > 🇧🇷 **[Versão em português](README-pt.md)**
 
-This directory contains benchmark verification runs comparing releases of **PgCache** across two distinct environments:
+This directory contains benchmark verification runs comparing releases of **PgCache** across two distinct environments and two workload complexity tiers:
 - [**PgCache 0.6.3**](0.6.3/README.md)
 - [**PgCache 0.6.4**](0.6.4/README.md)
 - [**PgCache 0.7.0**](0.7.0/README.md)
+- [**PgCache 0.7.1 (Baseline + Complex Multi-Tenant Scenarios)**](0.7.1/README.md)
 - [**Tuned Profile (v0.7.0)**](tuned/README.md)
 
-Both environments follow the benchmark protocol (simple query protocol `-M simple`, no explicit transactions, dynamic warm-up settling `< 1%`).
+Both environments follow the benchmark protocol (simple query protocol `-M simple`, no explicit transactions, dynamic warm-up settling `< 1%`, and `pgcache_queries_uncacheable == 0`).
 
 ---
 
@@ -48,33 +49,63 @@ Comparing the default cloud setup against the tuned profile (`tcp_slow_start_aft
 
 Executed in local Docker on developer machine with single-host networking and shared core execution:
 
-### Summary Comparison across Workload Axes
+### Summary Comparison across Workload Axes (`workload/dashboard.sql`)
 
-| Metric / Scenario | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 |
-|---|---|---|---|---|
-| **Hit Ratio (All Cells)** | N/A | **100.0%** | **100.0%** | **100.0%** (1..500t) / **99.7%** (1,000t) |
-| **Single-Client Latency** | 10.5–12.1 ms | **5.53 ms** (2.0× faster) | **5.15 ms** (2.1× faster) | **5.55 ms** (2.1× faster) |
-| **8 Clients Latency (Read)** | 35.4–38.1 ms | **14.62 ms** (+142%) | **15.34 ms** (+149%) | **14.90 ms** (+145%) |
-| **Max Throughput (32 clients)** | 297–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) |
-| **Writes Resilience (5% w, 1 wt)** | 239–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) |
-| **Writes Resilience (10% w, 1000 wt)** | 251–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) |
+| Metric / Scenario | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | PgCache 0.7.1 |
+|---|---|---|---|---|---|
+| **Hit Ratio (All Cells)** | N/A | **100.0%** | **100.0%** | **100.0%** (1..500t) / **99.7%** (1,000t) | **100.0%** (1..500t) / **99.9%** (1,000t) |
+| **Single-Client Latency** | 10.5–13.3 ms | **5.53 ms** (2.0× faster) | **5.15 ms** (2.1× faster) | **5.55 ms** (2.1× faster) | **6.89 ms** (1.9× faster) |
+| **8 Clients Latency (Read)** | 35.4–40.1 ms | **14.62 ms** (+142%) | **15.34 ms** (+149%) | **14.90 ms** (+145%) | **16.75 ms** (+131%) |
+| **Max Throughput (32 clients)** | 249–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) | **593 rps** (+138%) |
+| **Writes Resilience (5% w, 1 wt)** | 217–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) | **456 rps** (+110%) |
+| **Writes Resilience (10% w, 1000 wt)** | 220–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) | **308 rps** (+40%) |
 
 ### Tenant Count Sweep (Local Docker Baseline)
 
-| Active Tenants | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | Hit Ratio | Warm Passes |
-|---|---|---|---|---|---|---|
-| **1 Tenant** | 33.9–46.1 ms (174–236 rps) | **13.4 ms** (596 rps, +153%) | **13.2 ms** (604 rps, +161%) | **14.0 ms** (572 rps, +229%) | **100.0%** | 2–3 |
-| **10 Tenants** | 32.6–33.5 ms (239–246 rps) | **13.6 ms** (590 rps, +140%) | **15.1 ms** (530 rps, +122%) | **14.1 ms** (567 rps, +137%) | **100.0%** | 2 |
-| **50 Tenants** | 32.5–34.9 ms (229–246 rps) | **13.8 ms** (578 rps, +144%) | **14.0 ms** (572 rps, +150%) | **15.1 ms** (529 rps, +115%) | **100.0%** | 3 |
-| **200 Tenants** | 33.2–37.0 ms (216–241 rps) | **14.0 ms** (570 rps, +147%) | **14.0 ms** (572 rps, +137%) | **15.4 ms** (521 rps, +141%) | **100.0%** | 3 |
-| **500 Tenants** | 33.7–36.5 ms (219–238 rps) | **14.2 ms** (563 rps, +144%) | **14.3 ms** (559 rps, +135%) | **16.1 ms** (496 rps, +126%) | **100.0%** | 4 |
-| **1,000 Tenants** | 33.6–36.0 ms (222–238 rps) | **14.3 ms** (559 rps, +143%) | **14.5 ms** (551 rps, +132%) | **15.7 ms** (510 rps, +130%) | **99.7%–100.0%** | 5 |
+| Active Tenants | Origin (Path A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | PgCache 0.7.1 | Hit Ratio | Warm Passes |
+|---|---|---|---|---|---|---|---|
+| **1 Tenant** | 33.9–46.1 ms (174–236 rps) | **13.4 ms** (596 rps, +153%) | **13.2 ms** (604 rps, +161%) | **14.0 ms** (572 rps, +229%) | **15.6 ms** (514 rps, +138%) | **100.0%** | 2–3 |
+| **10 Tenants** | 32.6–36.1 ms (222–246 rps) | **13.6 ms** (590 rps, +140%) | **15.1 ms** (530 rps, +122%) | **14.1 ms** (567 rps, +137%) | **16.1 ms** (496 rps, +123%) | **100.0%** | 2 |
+| **50 Tenants** | 32.5–37.2 ms (215–246 rps) | **13.8 ms** (578 rps, +144%) | **14.0 ms** (572 rps, +150%) | **15.1 ms** (529 rps, +115%) | **17.2 ms** (465 rps, +116%) | **100.0%** | 3 |
+| **200 Tenants** | 33.2–40.1 ms (199–241 rps) | **14.0 ms** (570 rps, +147%) | **14.0 ms** (572 rps, +137%) | **15.4 ms** (521 rps, +141%) | **16.9 ms** (475 rps, +139%) | **100.0%** | 3 |
+| **500 Tenants** | 33.7–40.5 ms (198–238 rps) | **14.2 ms** (563 rps, +144%) | **14.3 ms** (559 rps, +135%) | **16.1 ms** (496 rps, +126%) | **17.8 ms** (450 rps, +127%) | **100.0%** | 4 |
+| **1,000 Tenants** | 33.6–40.9 ms (196–238 rps) | **14.3 ms** (559 rps, +143%) | **14.5 ms** (551 rps, +132%) | **15.7 ms** (510 rps, +130%) | **17.7 ms** (451 rps, +130%) | **99.7%–100.0%** | 5 |
 
 ---
 
-## 3. Environment Insights: DOKS vs Docker
+## 3. Complex Multi-Tenant Scenarios (PgCache 0.7.1 — Materialized View Acceleration)
 
-### 3.1 Why Throughput Gain is Higher in Docker (+140% to +160%) than in DOKS (+40% to +93%)
+In **PgCache 0.7.1**, we expanded the benchmark beyond lightweight operational lookups (`workload/dashboard.sql`) into four realistic **complex enterprise SaaS workloads** (`scripts/04-complex-sweep.sh`) and enforced a strict **Differential Correctness, Cacheability, and MV Admission Gate** (`scripts/verify-correctness.sh`):
+- **8/8 complex queries** verified byte-for-byte identical between Origin and PgCache (`verify-correctness.txt`).
+- **100% cacheability** (`pgcache_queries_uncacheable == 0`) and **100% Materialized View admission** (`pgcache_cache_mv_gate{result="admitted"} == 8/8`).
+
+### 3.1 Workload Complexity Comparison (`TENANTS=200`, `CLIENTS=8`)
+
+| Scenario | SQL Workload | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Speedup | Hit Ratio | Warm Passes |
+|---|---|---|---|---:|---:|---:|---:|
+| **`dash_base`** | [`dashboard.sql`](../workload/dashboard.sql) (8 operational lookups) | 40.57 ms · 197 rps | **17.11 ms · 468 rps** | **+138%** | **2.4×** | 100.0% | 3 |
+| **`search`** | [`complex-search.sql`](../workload/complex-search.sql) (4 `ILIKE '%...%'` + `JOIN`/`LEFT JOIN` queries) | 98.50 ms · 81 rps | **1.34 ms · 5,982 rps** | **+7,285%** | **73.9×** | 100.0% | 4 |
+| **`joins`** | [`complex-joins.sql`](../workload/complex-joins.sql) (4 deep 4-to-6 table `JOIN` & `LEFT JOIN` chains) | 131.70 ms · 61 rps | **1.36 ms · 5,902 rps** | **+9,575%** | **96.8×** | 100.0% | 5 |
+| **`analytics`** | [`complex-analytics.sql`](../workload/complex-analytics.sql) (4 `GROUP BY` + `FILTER` + `CASE` + `HAVING` rollups) | 95.76 ms · 84 rps | **1.31 ms · 6,118 rps** | **+7,183%** | **72.8×** | 100.0% | 4 |
+| **`cplx_dash`** | [`complex-dashboard.sql`](../workload/complex-dashboard.sql) (Unified 8-statement complex analytics & search screen) | 217.38 ms · 37 rps | **2.73 ms · 2,928 rps** | **+7,814%** | **79.1×** | 100.0% | 6 |
+
+### 3.2 Concurrency Scaling on `complex-dashboard.sql` (`TENANTS=200`)
+
+| Clients | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Speedup | Hit Ratio | Warm Passes |
+|---:|---|---|---:|---:|---:|---:|
+| **1** | 86.03 ms · 12 rps | **1.90 ms · 528 rps** | **+4,300%** | **44.0×** | 100.0% | 3 |
+| **4** | 140.95 ms · 28 rps | **2.38 ms · 1,679 rps** | **+5,896%** | **60.0×** | 100.0% | 2 |
+| **8** | 286.37 ms · 28 rps | **2.84 ms · 2,814 rps** | **+9,950%** | **100.5×** | 100.0% | 2 |
+| **16** | 525.68 ms · 30 rps | **4.94 ms · 3,239 rps** | **+10,697%** | **108.0×** | 100.0% | 2 |
+| **32** | 983.51 ms · 33 rps | **9.82 ms · 3,260 rps** | **+9,779%** | **98.8×** | 100.0% | 2 |
+
+For full complex tenant scaling and write invalidation analysis, see [`results/0.7.1/README.md`](0.7.1/README.md).
+
+---
+
+## 4. Environment Insights: DOKS vs Docker
+
+### 4.1 Why Throughput Gain is Higher in Docker (+140% to +160%) than in DOKS (+40% to +93%)
 
 A frequent observation when comparing local Docker numbers against cloud Kubernetes (DOKS) numbers is the noticeable gap in relative speedup:
 
@@ -92,7 +123,7 @@ This discrepancy is driven by four structural, hardware, and architectural facto
      $$\text{DOKS: } \frac{20.0 + 5.6\text{ ms}}{10.5 + 5.6\text{ ms}} = \frac{25.6\text{ ms}}{16.1\text{ ms}} \approx 1.59\times \ (+59\%)$$
 
 2. **Origin PostgreSQL Baseline Performance**:
-   - In **Docker**, the origin PostgreSQL, PgCache, and pgbench (8–32 workers) competed for the same CPU cores, L3 caches, and memory bus. Under this contention, Origin latency was inflated to **33–36 ms (220–246 rps)**.
+   - In **Docker**, the origin PostgreSQL, PgCache, and pgbench (8–32 workers) competed for the same CPU cores, L3 caches, and memory bus. Under this contention, Origin latency was inflated to **33–40 ms (196–246 rps)**.
    - On **DOKS**, strict `podAntiAffinity` gave the Origin a dedicated 4-vCPU droplet without CFS limits or co-located processes. Origin performance was significantly higher: **23–27 ms (291–343 rps)** — a ~40% faster baseline. A faster origin naturally narrows the relative cache gain percentage.
 
 3. **CPU Frequency and Single-Core IPC**:
@@ -106,18 +137,19 @@ This discrepancy is driven by four structural, hardware, and architectural facto
      - Cache hits would never cross the physical network, eliminating the 5.6 ms inter-node network floor entirely.
      - Under a sidecar/DaemonSet topology, cloud Kubernetes speedup gains would match or exceed the ~2.5× (+150%) figures seen in Docker.
 
-### 3.2 Key Environmental Takeaways
+### 4.2 Key Environmental Takeaways
 
 1. **Key-Space Scaling**:
-   - Scaling active tenants from 1 to 1,000 (and up to 2,000 on DOKS) **does not degrade cache hit ratio**, which remained at **100.0%** across all tested releases.
+   - Scaling active tenants from 1 to 1,000 (and up to 2,000 on DOKS) **does not degrade cache hit ratio**, which remained at **99.9%–100.0%** across all tested releases on the baseline dashboard.
 2. **Production Validity**:
    - Docker overstates relative speedup because of zero network latency. DOKS provides the authoritative, realistic measurement for real-world cloud network topologies.
 
 ---
 
-## 4. Directory Layout by Tag
+## 5. Directory Layout by Tag
 
 - [`0.6.3/`](0.6.3/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.6.3`.
 - [`0.6.4/`](0.6.4/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.6.4`.
 - [`0.7.0/`](0.7.0/): Full results, TSVs (`results-doks.tsv`, `results-docker.tsv`), and logs for `0.7.0`.
+- [`0.7.1/`](0.7.1/): Full results, TSVs (`results.tsv`, `results-docker.tsv`, `results-complex.tsv`), differential correctness gate (`verify-correctness.txt`), and complex scenario logs for `0.7.1`.
 - [`tuned/`](tuned/): Full results, TSVs (`results.tsv`), and logs for Tuned Profile (`0.7.0` with network & engine tuning).
