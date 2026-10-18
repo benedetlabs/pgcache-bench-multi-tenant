@@ -60,7 +60,7 @@ run_complex_clients() {
 }
 
 run_complex_writes() {
-  if [ "${RESET_BEFORE_WRITES:-0}" = "1" ]; then
+  if [ "${RESET_BEFORE_WRITES:-1}" = "1" ]; then
     reset_pgcache
     CLIENTS=8 warm_until_settled '$PGCACHE_HOST' '$PGCACHE_PORT' -f /tmp/mt/complex-dashboard.sql -D tenants="$TENANTS" >/dev/null
   fi

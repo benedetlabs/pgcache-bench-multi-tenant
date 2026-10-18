@@ -53,6 +53,7 @@ services:
       # Same warning as the Kubernetes manifest: get this list wrong and every
       # query misses, with no error anywhere.
       ALLOWED_TABLES: "product,category,seller,customer,orders,order_item,review"
+      MEMORY_LIMIT: "${MEMORY_LIMIT:-3758096384}"
       PGCACHE_TELEMETRY: "off"
     ports: ["56432:6432", "59090:9090"]
 

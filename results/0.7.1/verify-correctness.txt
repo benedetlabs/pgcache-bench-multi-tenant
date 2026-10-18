@@ -1,19 +1,24 @@
 ========================================================================
  Running Differential Correctness & Cacheability Gate (docker)
 ========================================================================
-  [PASS] Query #1: Origin == PgCache (pass 1 & pass 2 identical, 15 rows)
-  [PASS] Query #2: Origin == PgCache (pass 1 & pass 2 identical, 15 rows)
-  [PASS] Query #3: Origin == PgCache (pass 1 & pass 2 identical, 15 rows)
-  [PASS] Query #4: Origin == PgCache (pass 1 & pass 2 identical, 20 rows)
-  [PASS] Query #5: Origin == PgCache (pass 1 & pass 2 identical, 10 rows)
-  [PASS] Query #6: Origin == PgCache (pass 1 & pass 2 identical, 20 rows)
-  [PASS] Query #7: Origin == PgCache (pass 1 & pass 2 identical, 20 rows)
-  [PASS] Query #8: Origin == PgCache (pass 1 & pass 2 identical, 15 rows)
+  [PASS] Query #1 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Query #2 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Query #3 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Query #4 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Query #5 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Query #6 : Origin == PgCache (pass 1, 2 & 3 identical, 10 rows)
+  [PASS] Query #7 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Query #8 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Query #9 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Query #10: Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Query #11: Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Query #12: Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
 ------------------------------------------------------------------------
-  Queries checked:     8 (Passed: 8, Failed: 0)
-  Cacheable delta:     16 (expected 16)
+  Queries checked:     12 (Passed: 12, Failed: 0)
+  Cacheable delta:     36 (expected 36)
   Uncacheable delta:   0 (expected 0)
-  Cache Hits delta:    8
-  MV Gate Admitted:    8 (expected 8, Rejected: 0)
+  Cache Hits delta:    24
+  MV Gate Admitted:    12 (expected 12, Rejected: 0)
+  MV Hits delta:       12 (expected 12)
   Cache Errors delta:  0 (expected 0)
 ========================================================================

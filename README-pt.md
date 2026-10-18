@@ -54,7 +54,7 @@ do jeito que foi, no que os números deram, e os erros cometidos no caminho.
 Escrito para quem nunca viu isto antes; nada assume contexto prévio.
 
 **O resultado, em uma linha:** o cache respondeu um dashboard de oito statements
-entre **6,4× e 12,6× mais rápido** que o banco sem cache (e **44× a 108× mais
+entre **6,4× e 12,6× mais rápido** que o banco sem cache (e **41× a 97× mais
 rápido** em cargas complexas de 4 a 6 tabelas aceleradas por Materialized Views
 no PgCache `0.7.1`), com **100% de taxa de acerto** em cargas de leitura
 estabilizadas.
@@ -62,7 +62,7 @@ estabilizadas.
 A seção 16 é onde esse número deve parar de ser esticado. Enquanto a campanha
 original publicou sem um gate de correção diferencial, [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
 agora valida igualdade byte a byte de saída (`Origin == PgCache`), `pgcache_queries_uncacheable == 0`
-e admissão no gate de Materialized Views (`results/0.7.1/verify-correctness.txt`).
+e admissão + hits no gate de Materialized Views em todas as 12 consultas complexas (`results/0.7.1/verify-correctness.txt`).
 
 O cache testado é o [PgCache](https://www.pgcache.com). Nada aqui tem vínculo com
 ele — é uma medição independente, inclusive nas partes desfavoráveis.
@@ -1096,30 +1096,30 @@ suítes de carga complexa avaliadas no **PgCache `0.7.1`**:
 
 | Cenário | Statements | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
 |---|---:|---|---|---:|---:|---:|---:|
-| **`dash_base`** (`dashboard.sql`) | 8 | 40,57 ms · 197 rps | **17,11 ms · 468 rps** | **+138%** | **2,4×** | 100,0% | 3 |
-| **`search`** (`complex-search.sql`) | 4 | 98,50 ms · 81 rps | **1,34 ms · 5.982 rps** | **+7.285%** | **73,9×** | 100,0% | 4 |
-| **`joins`** (`complex-joins.sql`) | 4 | 131,70 ms · 61 rps | **1,36 ms · 5.902 rps** | **+9.575%** | **96,8×** | 100,0% | 5 |
-| **`analytics`** (`complex-analytics.sql`) | 4 | 95,76 ms · 84 rps | **1,31 ms · 6.118 rps** | **+7.183%** | **72,8×** | 100,0% | 4 |
-| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 217,38 ms · 37 rps | **2,73 ms · 2.928 rps** | **+7.814%** | **79,1×** | 100,0% | 6 |
+| **`dash_base`** (`dashboard.sql`) | 8 | 37,61 ms · 213 rps | **16,05 ms · 498 rps** | **+134%** | **2,3×** | 100,0% | 3 |
+| **`search`** (`complex-search.sql`) | 4 | 88,67 ms · 90 rps | **1,53 ms · 5.223 rps** | **+5.703%** | **58,0×** | 100,0% | 4 |
+| **`joins`** (`complex-joins.sql`) | 4 | 121,46 ms · 66 rps | **1,25 ms · 6.426 rps** | **+9.636%** | **97,4×** | 100,0% | 5 |
+| **`analytics`** (`complex-analytics.sql`) | 4 | 92,31 ms · 87 rps | **1,39 ms · 5.737 rps** | **+6.494%** | **65,9×** | 100,0% | 5 |
+| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 209,62 ms · 38 rps | **2,86 ms · 2.798 rps** | **+7.263%** | **73,6×** | 100,0% | 6 |
 
 #### Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200`, Docker Local)
 
 | Clientes | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
 |---:|---|---|---:|---:|---:|---:|
-| **1** | 86,03 ms · 12 rps | **1,90 ms · 528 rps** | **+4.300%** | **44,0×** | 100,0% | 3 |
-| **4** | 140,95 ms · 28 rps | **2,38 ms · 1.679 rps** | **+5.896%** | **60,0×** | 100,0% | 2 |
-| **8** | 286,37 ms · 28 rps | **2,84 ms · 2.814 rps** | **+9.950%** | **100,5×** | 100,0% | 2 |
-| **16** | 525,68 ms · 30 rps | **4,94 ms · 3.239 rps** | **+10.697%** | **108,0×** | 100,0% | 2 |
-| **32** | 983,51 ms · 33 rps | **9,82 ms · 3.260 rps** | **+9.779%** | **98,8×** | 100,0% | 2 |
+| **1** | 84,83 ms · 12 rps | **1,73 ms · 578 rps** | **+4.717%** | **48,2×** | 100,0% | 2 |
+| **4** | 92,22 ms · 43 rps | **2,26 ms · 1.770 rps** | **+4.016%** | **41,2×** | 100,0% | 2 |
+| **8** | 194,69 ms · 41 rps | **2,66 ms · 3.003 rps** | **+7.224%** | **73,2×** | 100,0% | 2 |
+| **16** | 400,89 ms · 40 rps | **4,60 ms · 3.475 rps** | **+8.588%** | **86,9×** | 100,0% | 2 |
+| **32** | 862,44 ms · 37 rps | **9,20 ms · 3.478 rps** | **+9.300%** | **94,0×** | 100,0% | 2 |
 
 #### Duas Descobertas Arquiteturais das Varreduras Complexas
 
 1. **Cache em Dois Estágios no PgCache `0.7.1` (Subsunção de Tabelas vs. Gate de Admissão de Materialized Views)**:
-   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`17,11 ms` vs `40,57 ms`, **2,4× mais rápido**).
-   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{result="admitted"} == 8/8`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes em **~0,33 ms por statement** (`2,73 ms` para 8 statements contra `217,38 ms` na Origem — **79,1× mais rápido** com 8 clientes e **108,0× mais rápido** com 16 clientes).
-2. **Onde as Materialized Views Complexas Encontram Seus Limites (Taxa de Registro no Cold-Start e Custo de Rebuild em Escritas)**:
-   - **Gate de Registro no Cold-Start (`pgcache_cache_reg_gate_rate`)**: Em 500–1.000 tenants sobre `complex-dashboard.sql`, o PgCache limita o registro de novas MVs a ~8–20 consultas/s para proteger a origem contra tempestades de `CREATE MATERIALIZED VIEW`, aquecendo ~175 tenants (`35,2%` / `17,5%` de hit) dentro de uma janela fria de 90s.
-   - **Custo de Rebuild de MVs Multi-Tabela sob Escrita (`pgcache_cache_mv_rebuilds`)**: Enquanto `dashboard.sql` sustenta ganhos de `+40%` a `+110%` sob 5%–10% de tráfego `UPDATE orders`, 7 dos 8 statements em `complex-dashboard.sql` fazem join de `orders` entre 4 a 6 tabelas. Instruções contínuas de `UPDATE orders` invalidam essas MVs e disparam rebuilds completos de 6 tabelas (~50–100 ms cada no PostgreSQL embutido), causando regressão de vazão (`-68%` a `-93%`), exceto quando as escritas estão concentradas em um único tenant quente enquanto a Origem está saturada (`10:1`, onde o PgCache vence por **`+62%`**). Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
+   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`16,05 ms` vs `37,61 ms`, **2,3× mais rápido**).
+   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes via `pgcache_cache_mv_hits` em **~0,31–0,38 ms por statement** (`2,86 ms` para 8 statements contra `209,62 ms` na Origem — **73,6× mais rápido** com 8 clientes e **94,0× mais rápido** com 32 clientes).
+2. **Onde as Materialized Views Complexas Encontram Seus Limites (Escala no Cold-Start e `INNER JOIN` vs `LEFT JOIN` sob Escrita)**:
+   - **Escala do Working Set no Cold-Start**: De 1 a 200 tenants (`1.600` consultas complexas distintas), o PgCache aquece 100,0% do working set (`+6.985%` a `+9.139%` de ganho), e em 500 tenants (`4.000` consultas complexas) atinge `97,4%` de hit e **+211% (`3,1×`)** de aceleração. Em 1.000 tenants (`8.000` consultas complexas), a amostragem uniforme combinada ao custo de população fria por tenant (~100–250 ms por tenant frio) aquece `62,7%` das consultas dentro da janela limitada de 8 passes (15s).
+   - **CDC In-Place em `INNER JOIN` vs. Invalidação Conservadora em `LEFT JOIN` sob Escrita**: Quando `UPDATE orders` roda em proporções de 5%–10% de escritas, as **5 consultas `INNER JOIN` (`62,5%`)** em `complex-dashboard.sql` (que possuem predicados explícitos `WHERE ... AND o.tenant_id = :t`) aplicam atualizações in-place via CDC (`cdc_update`) e rebuilds de MV em background (`pgcache_cache_mv_rebuilds`), permanecendo **100% cache hits**. Já as **3 consultas `LEFT JOIN` (`37,5%`)** (onde `o.tenant_id = :t` reside na cláusula `ON` do outer join para preservar clientes sem pedidos) sofrem invalidação conservadora em escritas na tabela `orders`, estabilizando o hit ratio geral em **62,5%–67,6% (`5/8`)** com **+8% a +30% de ganho de vazão** em `5:1`, `5:10`, `10:1` e `10:200` (paridade de `-5%` em `5:200`). Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
 
 ---
 
@@ -1142,8 +1142,8 @@ multi-tenant (cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN`, busca
 textual `ILIKE '%...%'`, `GROUP BY` com `FILTER`/`CASE`/`HAVING` e limites com
 `ORDER BY`), adicionamos [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
 e o executamos contra o PgCache `0.7.1` ([`results/0.7.1/verify-correctness.txt`](results/0.7.1/verify-correctness.txt)):
-- **8/8 consultas complexas** retornaram linhas idênticas byte a byte entre Origem e PgCache nos Passes 1 e 2.
-- **Delta de `pgcache_queries_uncacheable` = `0`** (`16/16` cacheáveis) e **`pgcache_cache_mv_gate` admitidas = `8/8`**.
+- **12/12 consultas complexas** retornaram linhas idênticas byte a byte entre Origem e PgCache nos Passes 1 (miss), 2 (hit em tabela-base + build de MV) e 3 (hit em MV).
+- **Delta de `pgcache_queries_uncacheable` = `0`** (`36/36` cacheáveis), **`pgcache_cache_mv_gate{outcome="admit"}` = `12/12` (`reject = 0`)** e **delta de `pgcache_cache_mv_hits` = `12/12`**.
 
 ### Só latência média
 
@@ -1170,8 +1170,8 @@ diz o que acontece quando o conjunto de dados excede a memória da origem.
 A curva ficou plana de 1 a 200 (e até 2.000 no DOKS para `dashboard.sql`). Nada
 garante que continue plana em 20.000, onde o espaço de consultas é uma ordem de
 grandeza maior — e como a seção 15.1 mostrou, Materialized Views complexas
-multi-tabela já encontram limites de taxa de registro no cold-start em 500–1.000
-tenants. **A planura da curva baseline não é licença para extrapolar.**
+multi-tabela exigem janelas maiores de aquecimento quando os tenants ativos chegam a 1.000 (`8.000` consultas complexas distintas).
+**A planura da curva baseline não é licença para extrapolar.**
 
 ### Não há cache de aplicação na comparação
 

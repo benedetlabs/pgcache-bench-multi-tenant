@@ -37,6 +37,7 @@ SELECT cat.id AS category_id, cat.name AS category_name,
   JOIN product p    ON p.id = oi.product_id
   JOIN category cat ON cat.id = p.category_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY cat.id, cat.name, p.id, p.name
  ORDER BY settled_revenue DESC, cat.id ASC, p.id ASC
  LIMIT 20;
@@ -54,6 +55,7 @@ SELECT s.id AS seller_id, s.name AS seller_name, s.rating AS seller_rating,
   JOIN product p ON p.id = oi.product_id
   JOIN seller s  ON s.id = p.seller_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY s.id, s.name, s.rating, p.id, p.name
 HAVING sum(oi.qty * oi.price) >= 400
  ORDER BY total_revenue DESC, s.id ASC, p.id ASC
@@ -69,8 +71,8 @@ SELECT c.id AS customer_id, c.name AS customer_name, c.email,
        coalesce(sum(oi.qty * oi.price), 0) AS lifetime_revenue,
        coalesce(max(o.total), 0) AS max_order_value
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
  GROUP BY c.id, c.name, c.email
  ORDER BY lifetime_revenue DESC, c.id ASC
@@ -94,6 +96,7 @@ SELECT cat.name AS category_name,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY cat.name, s.name, p.id, p.name
 HAVING count(oi.id) >= 3
  ORDER BY gross_revenue DESC, p.id ASC

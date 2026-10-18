@@ -76,30 +76,30 @@ Executado em ambiente Docker local em máquina de desenvolvimento com rede de ho
 ## 3. Cenários Complexos Multi-Tenant (PgCache 0.7.1 — Aceleração via Materialized Views)
 
 No **PgCache 0.7.1**, expandimos o benchmark além de consultas operacionais leves (`workload/dashboard.sql`) para quatro **cargas corporativas SaaS complexas** (`scripts/04-complex-sweep.sh`) e aplicamos um rigoroso **Gate Diferencial de Correção, Cacheabilidade e Admissão de MVs** (`scripts/verify-correctness.sh`):
-- **8/8 consultas complexas** verificadas byte a byte idênticas entre Origem e PgCache (`verify-correctness.txt`).
-- **100% de cacheabilidade** (`pgcache_queries_uncacheable == 0`) e **100% de admissão no Gate de Materialized Views** (`pgcache_cache_mv_gate{result="admitted"} == 8/8`).
+- **12/12 consultas complexas** verificadas byte a byte idênticas entre Origem e PgCache em 3 passes (`verify-correctness.txt`).
+- **100% de cacheabilidade** (`pgcache_queries_uncacheable == 0`), **100% de admissão no Gate de Materialized Views** (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`, `reject == 0`) e **100% de hit em MVs no Passe 3** (delta de `pgcache_cache_mv_hits == 12/12`).
 
 ### 3.1 Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8`)
 
 | Cenário | Carga SQL | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
 |---|---|---|---|---:|---:|---:|---:|
-| **`dash_base`** | [`dashboard.sql`](../workload/dashboard.sql) (8 consultas operacionais simples) | 40,57 ms · 197 rps | **17,11 ms · 468 rps** | **+138%** | **2,4×** | 100,0% | 3 |
-| **`search`** | [`complex-search.sql`](../workload/complex-search.sql) (4 buscas textuais `ILIKE '%...%'` + `JOIN`/`LEFT JOIN`) | 98,50 ms · 81 rps | **1,34 ms · 5.982 rps** | **+7.285%** | **73,9×** | 100,0% | 4 |
-| **`joins`** | [`complex-joins.sql`](../workload/complex-joins.sql) (4 cadeias profundas de 4 a 6 tabelas com `JOIN` e `LEFT JOIN`) | 131,70 ms · 61 rps | **1,36 ms · 5.902 rps** | **+9.575%** | **96,8×** | 100,0% | 5 |
-| **`analytics`** | [`complex-analytics.sql`](../workload/complex-analytics.sql) (4 agregações `GROUP BY` + `FILTER` + `CASE` + `HAVING`) | 95,76 ms · 84 rps | **1,31 ms · 6.118 rps** | **+7.183%** | **72,8×** | 100,0% | 4 |
-| **`cplx_dash`** | [`complex-dashboard.sql`](../workload/complex-dashboard.sql) (Tela unificada com 8 statements analíticos e de busca) | 217,38 ms · 37 rps | **2,73 ms · 2.928 rps** | **+7.814%** | **79,1×** | 100,0% | 6 |
+| **`dash_base`** | [`dashboard.sql`](../workload/dashboard.sql) (8 consultas operacionais simples) | 37,61 ms · 213 rps | **16,05 ms · 498 rps** | **+134%** | **2,3×** | 100,0% | 3 |
+| **`search`** | [`complex-search.sql`](../workload/complex-search.sql) (4 buscas textuais `ILIKE '%...%'` + `JOIN`/`LEFT JOIN`) | 88,67 ms · 90 rps | **1,53 ms · 5.223 rps** | **+5.703%** | **58,0×** | 100,0% | 4 |
+| **`joins`** | [`complex-joins.sql`](../workload/complex-joins.sql) (4 cadeias profundas de 4 a 6 tabelas com `JOIN` e `LEFT JOIN`) | 121,46 ms · 66 rps | **1,25 ms · 6.426 rps** | **+9.636%** | **97,4×** | 100,0% | 5 |
+| **`analytics`** | [`complex-analytics.sql`](../workload/complex-analytics.sql) (4 agregações `GROUP BY` + `FILTER` + `CASE` + `HAVING`) | 92,31 ms · 87 rps | **1,39 ms · 5.737 rps** | **+6.494%** | **65,9×** | 100,0% | 5 |
+| **`cplx_dash`** | [`complex-dashboard.sql`](../workload/complex-dashboard.sql) (Tela unificada com 8 statements analíticos e de busca) | 209,62 ms · 38 rps | **2,86 ms · 2.798 rps** | **+7.263%** | **73,6×** | 100,0% | 6 |
 
 ### 3.2 Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200`)
 
 | Clientes | Origem (Caminho A) | PgCache 0.7.1 (Caminho B) | Ganho | Aceleração | Hit Ratio | Passos Warmup |
 |---:|---|---|---:|---:|---:|---:|
-| **1** | 86,03 ms · 12 rps | **1,90 ms · 528 rps** | **+4.300%** | **44,0×** | 100,0% | 3 |
-| **4** | 140,95 ms · 28 rps | **2,38 ms · 1.679 rps** | **+5.896%** | **60,0×** | 100,0% | 2 |
-| **8** | 286,37 ms · 28 rps | **2,84 ms · 2.814 rps** | **+9.950%** | **100,5×** | 100,0% | 2 |
-| **16** | 525,68 ms · 30 rps | **4,94 ms · 3.239 rps** | **+10.697%** | **108,0×** | 100,0% | 2 |
-| **32** | 983,51 ms · 33 rps | **9,82 ms · 3.260 rps** | **+9.779%** | **98,8×** | 100,0% | 2 |
+| **1** | 84,83 ms · 12 rps | **1,73 ms · 578 rps** | **+4.717%** | **48,2×** | 100,0% | 2 |
+| **4** | 92,22 ms · 43 rps | **2,26 ms · 1.770 rps** | **+4.016%** | **41,2×** | 100,0% | 2 |
+| **8** | 194,69 ms · 41 rps | **2,66 ms · 3.003 rps** | **+7.224%** | **73,2×** | 100,0% | 2 |
+| **16** | 400,89 ms · 40 rps | **4,60 ms · 3.475 rps** | **+8.588%** | **86,9×** | 100,0% | 2 |
+| **32** | 862,44 ms · 37 rps | **9,20 ms · 3.478 rps** | **+9.300%** | **94,0×** | 100,0% | 2 |
 
-Para a análise completa de escala de tenants e invalidação por escrita em consultas complexas, consulte [`results/0.7.1/README-pt.md`](0.7.1/README-pt.md).
+Para a análise completa de escala de tenants (`+6.985%` em 200 tenants, `+211%` em 500 tenants) e resiliência a escritas mistas (`+8%` a `+30%` sob 5%–10% de escritas), consulte [`results/0.7.1/README-pt.md`](0.7.1/README-pt.md).
 
 ---
 

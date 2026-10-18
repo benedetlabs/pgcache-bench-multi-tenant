@@ -40,6 +40,8 @@ SELECT o.id AS order_id, o.status, o.created_at,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = c.id
  WHERE o.tenant_id = :t
+   AND oi.tenant_id = :t
+   AND c.tenant_id = :t
  GROUP BY o.id, o.status, o.created_at, c.name, p.name, cat.name, s.name, oi.id, oi.qty, oi.price
  ORDER BY o.created_at DESC, oi.id DESC
  LIMIT 20;
@@ -52,8 +54,8 @@ SELECT c.id, c.name, c.email,
        coalesce(sum(oi.qty), 0) AS total_items_bought,
        coalesce(sum(oi.qty * oi.price), 0) AS completed_spend
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id AND o.status = 'done'
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t AND o.status = 'done'
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
  GROUP BY c.id, c.name, c.email
  ORDER BY completed_spend DESC, c.id ASC
@@ -76,6 +78,7 @@ SELECT p.id, p.name AS product_name,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY p.id, p.name, cat.name, s.name
  ORDER BY units_sold DESC, gross_revenue DESC, p.id ASC
  LIMIT 20;
@@ -96,6 +99,7 @@ SELECT s.id AS seller_id, s.name AS seller_name, s.rating AS seller_rating,
   JOIN orders o      ON o.id = oi.order_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
    AND s.rating >= 3
  GROUP BY s.id, s.name, s.rating, cat.name, p.id, p.name
  ORDER BY gross_sales DESC, s.id ASC, p.id ASC

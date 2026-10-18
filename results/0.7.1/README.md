@@ -10,16 +10,16 @@ Verification run for **PgCache v0.7.1** (`pgcache/pgcache:0.7.1-arm64` / `pgcach
 
 ## 1. Executive Summary
 
-- **Differential Correctness & 100% Cacheability Gate (`verify-correctness.txt`)**:
-  - All **8/8 complex multi-tenant SQL queries** in `workload/complex-dashboard.sql` produced byte-for-byte identical result sets between Origin PostgreSQL 17 and PgCache 0.7.1 across both cold (Pass 1) and warm (Pass 2) executions.
-  - **100% Cacheability**: `pgcache_queries_cacheable` delta = `16/16`, `pgcache_queries_uncacheable` delta = **`0`**, `pgcache_queries_error` delta = **`0`**.
-  - **100% Materialized View (MV) Gate Admission**: `pgcache_cache_mv_gate{result="admitted"}` = **`8/8`** (`rejected = 0`).
+- **Differential Correctness, Cacheability & MV Hit Gate (`verify-correctness.txt`)**:
+  - All **12/12 distinct complex multi-tenant SQL queries** across `complex-search.sql` (4), `complex-joins.sql` (4), and `complex-analytics.sql` (4) (covering 100% of `complex-dashboard.sql`) produced byte-for-byte identical result sets between Origin PostgreSQL 17 and PgCache 0.7.1 across all three passes: cold miss/populate (Pass 1), base-table hit + MV build (Pass 2), and warm Materialized View hit (Pass 3).
+  - **100% Cacheability**: `pgcache_queries_cacheable` delta = `36/36`, `pgcache_queries_uncacheable` delta = **`0`**, `pgcache_queries_cache_error` delta = **`0`**.
+  - **100% Materialized View (MV) Gate Admission & Hit Verification**: `pgcache_cache_mv_gate{outcome="admit"}` = **`12/12`** (`outcome="reject"` = `0`), and `pgcache_cache_mv_hits` delta = **`12/12`** on Pass 3.
 - **Baseline Dashboard (`workload/dashboard.sql`)**:
   - **Hit Ratio**: **100.0%** from 1 to 500 tenants and **99.9%** at 1,000 tenants.
   - **Throughput Gain**: **+116% to +139%** across tenant scaling (`450–514 rps` vs `196–222 rps` on Origin), **+93% to +138%** across concurrency scaling (`1..32` clients), and **+40% to +110%** under 5%–10% write ratios.
 - **Complex Multi-Tenant Workloads (`workload/complex-*.sql`)**:
-  - **Read-Heavy Speedup**: Once admitted into PgCache's Materialized View engine (`pgcache_mv.q_<hash>`), expensive 4-to-6 table `JOIN`/`LEFT JOIN`/`GROUP BY`/`ILIKE` queries drop from **95.8–217.4 ms** on Origin to **1.31–2.73 ms** on PgCache (~0.33 ms per statement), delivering **72.8× to 96.8× higher throughput (`+7,183%` to `+9,575%`)** at 8 clients and up to **108.0× (`+10,697%`, `3,260 rps` vs `33 rps`)** under 16–32 concurrent clients.
-  - **Write Invalidation Trade-off on Multi-Table MVs**: While simple operational queries (`dashboard.sql`) sustain **+40% to +110%** gains under 5%–10% `UPDATE orders` traffic, complex 6-table analytical MVs that join `orders` suffer full MV invalidation and rebuild overhead (`pgcache_cache_mv_rebuilds`, ~50–100 ms per 6-table view rebuild) under continuous writes to the central `orders` fact table.
+  - **Read-Heavy Speedup**: Once admitted into PgCache's Materialized View engine (`pgcache_mv.q_<hash>`), expensive 4-to-6 table `JOIN`/`LEFT JOIN`/`GROUP BY`/`ILIKE` queries drop from **88.7–209.6 ms** on Origin to **1.25–2.86 ms** on PgCache (~0.31–0.38 ms per statement), delivering **58.0× to 97.4× higher throughput (`+5,703%` to `+9,636%`)** at 8 clients and up to **94.0× (`+9,300%`, `3,478 rps` vs `37 rps`)** under 32 concurrent clients.
+  - **Mixed Write Resilience (`INNER JOIN` In-Place CDC vs. `LEFT JOIN` Outer Invalidation)**: By scoping every joined tenant table with an explicit `:t` literal (`AND o.tenant_id = :t`, `AND oi.tenant_id = :t`, `AND c.tenant_id = :t`), the **5 `INNER JOIN` queries (`62.5%`)** in `complex-dashboard.sql` remain **100% cache hits** under `UPDATE orders` writes (updated in-place via CDC + background MV rebuild), while the **3 `LEFT JOIN` queries (`37.5%`)** (where `o.tenant_id = :t` resides in the outer-join `ON` clause) undergo conservative invalidation. Consequently, `complex-dashboard.sql` sustains a **62.5%–67.6% hit ratio** and **+8% to +30% throughput gain** across 5%–10% write workloads (`5:1`, `5:10`, `10:1`, `10:200`) with zero cache errors.
 
 ---
 
@@ -29,11 +29,12 @@ Executed via [`scripts/verify-correctness.sh`](../../scripts/verify-correctness.
 
 | Check | Result | Telemetry / Detail |
 |---|---|---|
-| **Byte-for-Byte Output Equality** | **PASS (8/8 queries)** | `psql -X -A -t` output identical between Origin and PgCache on Pass 1 & Pass 2 |
-| **Cacheable Queries Delta** | **PASS (`16 / 16`)** | `pgcache_queries_cacheable` incremented by 16 across 2 passes of 8 statements |
-| **Uncacheable Queries Delta** | **PASS (`0`)** | `pgcache_queries_uncacheable` delta = `0` (all expressions pre-computed via `\set`) |
-| **MV Gate Admission** | **PASS (`8 / 8`)** | `pgcache_cache_mv_gate{result="admitted"}` = `8`, `rejected` = `0` |
-| **Cache Errors Delta** | **PASS (`0`)** | `pgcache_queries_error` delta = `0` |
+| **Byte-for-Byte Output Equality** | **PASS (12/12 queries)** | `psql -tAF '|'` output identical between Origin and PgCache across Pass 1 (miss), Pass 2 (base-table hit + MV build), and Pass 3 (warm MV hit) |
+| **Cacheable Queries Delta** | **PASS (`36 / 36`)** | `pgcache_queries_cacheable` incremented by 36 across 3 passes of 12 statements |
+| **Uncacheable Queries Delta** | **PASS (`0`)** | `pgcache_queries_uncacheable` delta = `0` |
+| **MV Gate Admission** | **PASS (`12 / 12`)** | `pgcache_cache_mv_gate{outcome="admit"}` = `12`, `pgcache_cache_mv_gate{outcome="reject"}` = `0` |
+| **Materialized View Hits** | **PASS (`12 / 12`)** | `pgcache_cache_mv_hits` delta = `12` (100% of Pass 3 queries served directly from MVs) |
+| **Cache Errors Delta** | **PASS (`0`)** | `pgcache_queries_cache_error` delta = `0` |
 
 ---
 
@@ -76,7 +77,7 @@ Executed via [`scripts/verify-correctness.sh`](../../scripts/verify-correctness.
 ## 4. Sweep 4 — Complex Multi-Tenant Scenarios (`scripts/04-complex-sweep.sh`)
 
 To evaluate how PgCache behaves on heavy relational workloads beyond primary-key and single-join lookups, we designed four complex multi-tenant SQL suites under [`workload/`](../../workload/):
-1. **[`complex-search.sql`](../../workload/complex-search.sql)** (4 statements): Substring `ILIKE '%...%'` text searches across customer emails/names, product names, seller names, and review bodies combined with 2-to-4 table `INNER JOIN` and `LEFT JOIN` chains.
+1. **[`complex-search.sql`](../../workload/complex-search.sql)** (4 statements): Substring `ILIKE '%...%'` text searches across customer emails/names, product names, seller names, and review bodies combined with 2-to-6 table `INNER JOIN` and `LEFT JOIN` chains.
 2. **[`complex-joins.sql`](../../workload/complex-joins.sql)** (4 statements): Deep 4-to-6 table `INNER JOIN` and `LEFT JOIN` chains (`orders -> customer -> order_item -> product -> category -> seller -> review`), including customer cohort retention (`LEFT JOIN orders`) and unreviewed product inventory (`LEFT JOIN review`).
 3. **[`complex-analytics.sql`](../../workload/complex-analytics.sql)** (4 statements): Multi-dimensional `GROUP BY` rollups with conditional `FILTER (WHERE ...)`, `CASE WHEN` fulfillment & price-tier buckets, and `HAVING` thresholds.
 4. **[`complex-dashboard.sql`](../../workload/complex-dashboard.sql)** (8 statements): Unified enterprise analytics & search screen combining 2 search queries, 3 deep multi-table `JOIN` / `LEFT JOIN` queries, and 3 heavy analytical rollups.
@@ -87,17 +88,17 @@ Raw log: [`run-complex-scenarios.txt`](run-complex-scenarios.txt)
 
 | Scenario | Statements | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Speedup | Hit Ratio | Warm Passes |
 |---|---:|---|---|---:|---:|---:|---:|
-| **`dash_base`** (`dashboard.sql`) | 8 | 40.57 ms · 197 rps | **17.11 ms · 468 rps** | **+138%** | **2.4×** | 100.0% | 3 |
-| **`search`** (`complex-search.sql`) | 4 | 98.50 ms · 81 rps | **1.34 ms · 5,982 rps** | **+7,285%** | **73.9×** | 100.0% | 4 |
-| **`joins`** (`complex-joins.sql`) | 4 | 131.70 ms · 61 rps | **1.36 ms · 5,902 rps** | **+9,575%** | **96.8×** | 100.0% | 5 |
-| **`analytics`** (`complex-analytics.sql`) | 4 | 95.76 ms · 84 rps | **1.31 ms · 6,118 rps** | **+7,183%** | **72.8×** | 100.0% | 4 |
-| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 217.38 ms · 37 rps | **2.73 ms · 2,928 rps** | **+7,814%** | **79.1×** | 100.0% | 6 |
+| **`dash_base`** (`dashboard.sql`) | 8 | 37.61 ms · 213 rps | **16.05 ms · 498 rps** | **+134%** | **2.3×** | 100.0% | 3 |
+| **`search`** (`complex-search.sql`) | 4 | 88.67 ms · 90 rps | **1.53 ms · 5,223 rps** | **+5,703%** | **58.0×** | 100.0% | 4 |
+| **`joins`** (`complex-joins.sql`) | 4 | 121.46 ms · 66 rps | **1.25 ms · 6,426 rps** | **+9,636%** | **97.4×** | 100.0% | 5 |
+| **`analytics`** (`complex-analytics.sql`) | 4 | 92.31 ms · 87 rps | **1.39 ms · 5,737 rps** | **+6,494%** | **65.9×** | 100.0% | 5 |
+| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 209.62 ms · 38 rps | **2.86 ms · 2,798 rps** | **+7,263%** | **73.6×** | 100.0% | 6 |
 
-**Why Complex Queries Achieve 73×–97× Speedup (Two-Stage Caching & MV Admission Gate)**:
+**Why Complex Queries Achieve 58×–97× Speedup (Two-Stage Caching & MV Admission Gate)**:
 - In PgCache 0.7.1, query caching operates in two distinct tiers:
-  1. **Table-Level Subsumption (`public.*`)**: Base tables (`orders`, `order_item`, `product`, `customer`, `review`, `seller`, `category`) are populated in PgCache's embedded PostgreSQL instance. If a query hits `public.*` directly (`pgcache_cache_mv_fallthrough`), PgCache still executes the SQL join/aggregation locally (~15–17 ms for 8 lightweight queries in `dash_base`).
-  2. **Materialized View Admission Gate (`pgcache_mv.q_<hash>`)**: When a query has `OFFSET 0` (no positive `OFFSET`), groups on non-nullable entity keys (`mv=true`), and either scans `>= 1,000` pre-aggregation rows (`--mv_compute_min_rows=1000`) or achieves a `>= 10:1` row reduction ratio (`--mv_size_ratio=10`), PgCache admits the query into its Materialized View engine (`pgcache_cache_mv_gate{result="admitted"}`).
-- Because all 8 queries in `complex-dashboard.sql` (and all 12 queries across `complex-search`, `complex-joins`, and `complex-analytics`) satisfy the MV gate, PgCache pre-materializes the 10-to-20 row result view in `pgcache_mv.q_<hash>` and serves subsequent queries in **~0.33 ms per statement** (`1.31–1.36 ms` for 4 statements; `2.73 ms` for 8 statements), compared to **95.8–217.4 ms** on Origin.
+  1. **Table-Level Subsumption (`public.*`)**: Base tables (`orders`, `order_item`, `product`, `customer`, `review`, `seller`, `category`) are populated in PgCache's embedded PostgreSQL instance. If a query hits `public.*` directly (`pgcache_cache_mv_fallthrough`), PgCache still executes the SQL join/aggregation locally (~16 ms for 8 lightweight queries in `dash_base`).
+  2. **Materialized View Admission Gate (`pgcache_mv.q_<hash>`)**: When a query has `OFFSET 0` (no positive `OFFSET`), groups on non-nullable entity keys (`mv=true`), and either scans `>= 1,000` pre-aggregation rows (`--mv_compute_min_rows=1000`) or achieves a `>= 10:1` row reduction ratio (`--mv_size_ratio=10`), PgCache admits the query into its Materialized View engine (`pgcache_cache_mv_gate{outcome="admit"}`).
+- Because all 8 queries in `complex-dashboard.sql` (and all 12 queries across `complex-search`, `complex-joins`, and `complex-analytics`) satisfy the MV gate, PgCache pre-materializes the 10-to-20 row result view in `pgcache_mv.q_<hash>` and serves subsequent queries via `pgcache_cache_mv_hits` in **~0.31–0.38 ms per statement** (`1.25–1.53 ms` for 4 statements; `2.86 ms` for 8 statements), compared to **88.7–209.6 ms** on Origin.
 
 ### 4.2 Complex Tenant Scaling (`1` to `1,000` Tenants on `complex-dashboard.sql`, `CLIENTS=8`)
 
@@ -105,17 +106,17 @@ Raw log: [`run-complex-tenants.txt`](run-complex-tenants.txt)
 
 | Active Tenants | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Speedup | Hit Ratio | Warm Passes |
 |---:|---|---|---:|---:|---:|---:|
-| **1** | 249.31 ms · 32 rps | **2.67 ms · 2,996 rps** | **+9,262%** | **93.6×** | 100.0% | 2 |
-| **10** | 252.09 ms · 32 rps | **2.54 ms · 3,144 rps** | **+9,725%** | **98.3×** | 100.0% | 2 |
-| **50** | 268.10 ms · 30 rps | **2.58 ms · 3,097 rps** | **+10,223%** | **103.2×** | 100.0% | 3 |
-| **200** *(incremental)* | 274.31 ms · 29 rps | **56.03 ms · 143 rps** | **+393%** | **4.9×** | 97.9% | 6 |
-| **200** *(settled)* | 217.38 ms · 37 rps | **2.73 ms · 2,928 rps** | **+7,814%** | **79.1×** | 100.0% | 6 |
-| **500** *(cold 90s cap)* | 291.64 ms · 27 rps | 1,304.31 ms · 6 rps | -78% | 0.22× | 35.2% | 6 |
-| **1,000** *(cold 90s cap)* | 294.97 ms · 27 rps | 1,131.32 ms · 7 rps | -74% | 0.26× | 17.5% | 6 |
+| **1** | 208.31 ms · 38 rps | **2.28 ms · 3,511 rps** | **+9,139%** | **92.4×** | 100.0% | 2 |
+| **10** | 168.59 ms · 47 rps | **2.24 ms · 3,579 rps** | **+7,515%** | **76.1×** | 100.0% | 2 |
+| **50** | 184.07 ms · 43 rps | **2.27 ms · 3,532 rps** | **+8,114%** | **82.1×** | 100.0% | 3 |
+| **200** | 206.95 ms · 39 rps | **2.90 ms · 2,763 rps** | **+6,985%** | **70.8×** | 100.0% | 8 |
+| **500** | 212.27 ms · 38 rps | **67.55 ms · 118 rps** | **+211%** | **3.1×** | 97.4% | 8 |
+| **1,000** *(cold 8-pass cap)* | 226.02 ms · 35 rps | 517.86 ms · 15 rps | -57% | 0.43× | 62.7% | 5 |
 
-**Finding — Cold-Start Registration Rate Limiting (`pgcache_cache_reg_gate_rate`) at 500–1,000 Tenants**:
-- From **1 to 200 tenants**, PgCache warms the full working set of complex Materialized Views and delivers **+7,814% to +10,223% throughput gains** (`2,928–3,144 rps` vs `29–37 rps` on Origin). Even when 2.1% of queries are still finishing background MV construction (`97.9%` hit at 200 tenants), PgCache is **4.9× faster (`+393%`)** than Origin.
-- At **500 and 1,000 tenants**, each tenant introduces ~32 distinct complex query signatures (`16,000` to `32,000` heavy 6-table Materialized Views). Telemetry inspection revealed that PgCache enforces an internal cold-start registration rate limiter (`pgcache_cache_reg_gate_rate`) that throttles new query registrations to **~8–20 queries/sec** so background `CREATE MATERIALIZED VIEW` workers do not overwhelm the origin or embedded PostgreSQL instance. Within a 6-pass (90s) warm-up window, roughly ~175 tenants (~35.2% of 500 tenants, ~17.5% of 1,000 tenants) are registered, while unregistered queries wait behind the registration gate.
+**Finding — Tenant Working-Set Scaling & Cold-Start Registration Rate at 500–1,000 Tenants**:
+- From **1 to 200 tenants** (`8` to `1,600` distinct 4–6 table Materialized Views), PgCache warms 100.0% of the working set and delivers **+6,985% to +9,139% throughput gains (`70.8× to 92.4×` speedup, `2,763–3,579 rps` vs `38–47 rps` on Origin)**.
+- At **500 tenants** (`4,000` distinct complex queries), PgCache reaches a **97.4% hit ratio** within 8 warm-up passes and outperforms Origin by **+211% (`3.1×` speedup, `118 rps` vs `38 rps`, `67.55 ms` vs `212.27 ms`)**.
+- At **1,000 tenants** (`8,000` distinct complex queries), uniform random sampling across 1,000 tenants (`\set t random(1, 1000)`) combined with per-tenant cold population cost (~100–250 ms per cold tenant `SELECT DISTINCT` + MV build) warms **62.7%** of queries within the bounded 15s pass window, leaving 37.3% cold misses in flight during the measured pass.
 
 ### 4.3 Complex Concurrency Scaling (`1` to `32` Clients on `complex-dashboard.sql`, `TENANTS=200`)
 
@@ -123,33 +124,33 @@ Raw log: [`run-complex-clients.txt`](run-complex-clients.txt)
 
 | Clients | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Speedup | Hit Ratio | Warm Passes |
 |---:|---|---|---:|---:|---:|---:|
-| **1** | 86.03 ms · 12 rps | **1.90 ms · 528 rps** | **+4,300%** | **44.0×** | 100.0% | 3 |
-| **4** | 140.95 ms · 28 rps | **2.38 ms · 1,679 rps** | **+5,896%** | **60.0×** | 100.0% | 2 |
-| **8** | 286.37 ms · 28 rps | **2.84 ms · 2,814 rps** | **+9,950%** | **100.5×** | 100.0% | 2 |
-| **16** | 525.68 ms · 30 rps | **4.94 ms · 3,239 rps** | **+10,697%** | **108.0×** | 100.0% | 2 |
-| **32** | 983.51 ms · 33 rps | **9.82 ms · 3,260 rps** | **+9,779%** | **98.8×** | 100.0% | 2 |
+| **1** | 84.83 ms · 12 rps | **1.73 ms · 578 rps** | **+4,717%** | **48.2×** | 100.0% | 2 |
+| **4** | 92.22 ms · 43 rps | **2.26 ms · 1,770 rps** | **+4,016%** | **41.2×** | 100.0% | 2 |
+| **8** | 194.69 ms · 41 rps | **2.66 ms · 3,003 rps** | **+7,224%** | **73.2×** | 100.0% | 2 |
+| **16** | 400.89 ms · 40 rps | **4.60 ms · 3,475 rps** | **+8,588%** | **86.9×** | 100.0% | 2 |
+| **32** | 862.44 ms · 37 rps | **9.20 ms · 3,478 rps** | **+9,300%** | **94.0×** | 100.0% | 2 |
 
-- **Pure Single-Client Speedup (`CLIENTS=1`)**: With zero queueing anywhere, an 8-statement complex analytics & search screen drops from **86.03 ms (`12 rps`)** on Origin to **1.90 ms (`528 rps`)** on PgCache — a **44.0× (`+4,300%`)** pure caching speedup.
-- **High Concurrency (`CLIENTS=16..32`)**: Origin saturates at **28–33 rps** with latency climbing to **983.5 ms** (~1 second per screen render), whereas PgCache sustains **3,239–3,260 rps** (~26,000 SQL queries/sec) at **4.94–9.82 ms** per screen (**98.8× to 108.0× speedup**).
+- **Pure Single-Client Speedup (`CLIENTS=1`)**: With zero queueing anywhere, an 8-statement complex analytics & search screen drops from **84.83 ms (`12 rps`)** on Origin to **1.73 ms (`578 rps`)** on PgCache — a **48.2× (`+4,717%`)** pure caching speedup.
+- **High Concurrency (`CLIENTS=16..32`)**: Origin saturates at **37–40 rps** with latency climbing to **862.44 ms** (~0.86 seconds per screen render), whereas PgCache sustains **3,475–3,478 rps** (~27,800 SQL queries/sec) at **4.60–9.20 ms** per screen (**86.9× to 94.0× speedup**).
 
-### 4.4 Complex Write Invalidation & MV Rebuild Cost (`TENANTS=200`, `CLIENTS=8`)
+### 4.4 Complex Write Invalidation & `INNER JOIN` vs `LEFT JOIN` CDC Behavior (`TENANTS=200`, `CLIENTS=8`)
 
 Raw log: [`run-complex-writes.txt`](run-complex-writes.txt)
 
 | Write Ratio | Write Tenants | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Hit Ratio | Warm Passes |
 |---:|---:|---|---|---:|---:|---:|
-| **0%** | 200 | 292.04 ms · 27 rps | **2.89 ms · 2,771 rps** | **+10,163%** | 100.0% | 2 |
-| **5%** | 1 | 283.13 ms · 28 rps | 901.73 ms · 9 rps | -68% | 65.8% | 2 |
-| **5%** | 10 | 540.68 ms · 15 rps | 6,487.62 ms · 1 rps | -93% | 61.2% | 3 |
-| **5%** | 200 | 279.00 ms · 29 rps | 1,380.21 ms · 6 rps | -79% | 34.4% | 6 |
-| **10%** | 1 | 1,010.47 ms · 8 rps | **600.83 ms · 13 rps** | **+62%** | 62.1% | 3 |
-| **10%** | 200 | 244.39 ms · 33 rps | 822.49 ms · 10 rps | -70% | 27.2% | 3 |
+| **0%** | 200 | 196.12 ms · 41 rps | **2.62 ms · 3,059 rps** | **+7,361%** | 100.0% | 2 |
+| **5%** | 1 | 191.28 ms · 42 rps | **166.86 ms · 48 rps** | **+14%** | 67.6% | 2 |
+| **5%** | 10 | 216.04 ms · 37 rps | **167.12 ms · 48 rps** | **+30%** | 63.3% | 2 |
+| **5%** | 200 | 210.42 ms · 38 rps | 220.45 ms · 36 rps | -5% | 64.0% | 3 |
+| **10%** | 1 | 206.33 ms · 39 rps | **163.51 ms · 49 rps** | **+26%** | 63.1% | 2 |
+| **10%** | 200 | 213.03 ms · 38 rps | **195.50 ms · 41 rps** | **+8%** | 62.5% | 3 |
 
-**Why Write Invalidation Behaves Differently on Complex 6-Table MVs vs. Simple Lookups**:
-- On the baseline operational workload (`dashboard.sql`, Section 3.3), queries execute against base tables in `public.*` with light single/two-table lookups. When `write.sql` executes `UPDATE orders SET total = total + 1`, PgCache applies the row update via logical replication / CDC and maintains a **100.0% hit ratio** with **+40% to +110% throughput gain**.
-- On `complex-dashboard.sql`, **7 of the 8 statements join `orders` across 4 to 6 tables** (`orders`, `order_item`, `product`, `category`, `seller`, `customer`, `review`) and rely on pre-computed Materialized Views (`pgcache_mv.q_<hash>`) for their 100× speedup.
-- When `UPDATE orders` is sent through PgCache at 5%–10% transaction share, PgCache invalidates (`pgcache_cache_invalidations`) the Materialized Views that depend on `orders` and triggers background **6-table Materialized View rebuilds (`pgcache_cache_mv_rebuilds`)** inside its embedded PostgreSQL instance. Because each 6-table MV rebuild scans and joins thousands of rows (~50–100 ms of CPU work per MV rebuild), continuous writes to the central `orders` table saturate the embedded PostgreSQL workers with MV maintenance, reducing the effective hit ratio to `27.2%–65.8%`.
-- Only when writes are concentrated on a single hot tenant (`10:1`) while Origin is itself heavily contended (`1,010.5 ms` / `8 rps`) does PgCache remain ahead (**`+62%`**, `600.8 ms` / `13 rps`) by serving the other 199 read-only tenants from cache.
+**Why Hit Ratio Settles at ~62.5% (`5/8`) Under `UPDATE orders` Writes (`INNER JOIN` vs. `LEFT JOIN`)**:
+- In `complex-dashboard.sql`, all 8 statements reference `orders`:
+  1. **5 `INNER JOIN` Statements (`#1`, `#2`, `#4`, `#6`, `#8` = `62.5%` of queries)**: Because these queries include explicit `WHERE ... AND o.tenant_id = :t` equality predicates, PgCache scopes their `orders` table dependency to tenant `:t`, applies non-key `UPDATE orders SET total = total + 1` events in-place via logical replication (`cdc_update`), and rebuilds only the affected tenant's Materialized Views (`pgcache_cache_mv_rebuilds`, median `48 ms`). These 5 statements achieve a **100% cache hit rate** across read-only tenants and in-place hits on updated tenants.
+  2. **3 `LEFT JOIN` Statements (`#3`, `#5`, `#7` = `37.5%` of queries)**: These queries use `FROM customer c LEFT JOIN orders o ON o.customer_id = c.id AND o.tenant_id = :t` to preserve customers with zero orders (`o.id IS NULL`). Because `o.tenant_id = :t` is an outer-join `ON` condition rather than a top-level `WHERE` filter, PgCache conservatively invalidates registered outer-join queries referencing `orders` whenever `orders` receives a write.
+- As a result, exactly **5 out of 8 statements (`62.5%`)** remain warm cache hits (`62.5%–67.6%` observed hit ratio) while the 3 outer-join statements re-populate, enabling PgCache to maintain **+8% to +30% higher throughput** (`41–49 rps` vs `37–42 rps` on Origin) at 5%–10% write rates (`5:1`, `5:10`, `10:1`, `10:200`) and parity (`-5%`, `36 rps` vs `38 rps`) at `5:200`, with **`pgcache_queries_cache_error == 0`**.
 
 ---
 

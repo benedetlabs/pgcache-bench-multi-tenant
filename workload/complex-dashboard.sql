@@ -36,6 +36,7 @@ SELECT cat.id AS category_id, cat.name AS category_name,
   JOIN product p    ON p.id = oi.product_id
   JOIN category cat ON cat.id = p.category_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY cat.id, cat.name, p.id, p.name
  ORDER BY settled_revenue DESC, cat.id ASC, p.id ASC
  LIMIT 20;
@@ -53,6 +54,7 @@ SELECT s.id AS seller_id, s.name AS seller_name, s.rating AS seller_rating,
   JOIN product p ON p.id = oi.product_id
   JOIN seller s  ON s.id = p.seller_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY s.id, s.name, s.rating, p.id, p.name
 HAVING sum(oi.qty * oi.price) >= 400
  ORDER BY total_revenue DESC, s.id ASC, p.id ASC
@@ -66,8 +68,8 @@ SELECT c.id AS customer_id, c.name AS customer_name, c.email,
        coalesce(sum(oi.qty * oi.price), 0) AS lifetime_revenue,
        coalesce(max(o.total), 0) AS max_order_value
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
  GROUP BY c.id, c.name, c.email
  ORDER BY lifetime_revenue DESC, c.id ASC
@@ -89,6 +91,8 @@ SELECT o.id AS order_id, o.status, o.created_at,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = c.id
  WHERE o.tenant_id = :t
+   AND oi.tenant_id = :t
+   AND c.tenant_id = :t
  GROUP BY o.id, o.status, o.created_at, c.name, p.name, cat.name, s.name, oi.id, oi.qty, oi.price
  ORDER BY o.created_at DESC, oi.id DESC
  LIMIT 20;
@@ -99,8 +103,8 @@ SELECT c.id, c.name, c.email,
        coalesce(sum(oi.qty), 0) AS total_items_bought,
        coalesce(sum(oi.qty * oi.price), 0) AS completed_spend
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id AND o.status = 'done'
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t AND o.status = 'done'
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
  GROUP BY c.id, c.name, c.email
  ORDER BY completed_spend DESC, c.id ASC
@@ -123,6 +127,7 @@ SELECT cat.name AS category_name,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
  GROUP BY cat.name, s.name, p.id, p.name
 HAVING count(oi.id) >= 3
  ORDER BY gross_revenue DESC, p.id ASC
@@ -133,8 +138,8 @@ SELECT c.id, c.name, c.email,
        count(DISTINCT o.id) AS order_cnt,
        coalesce(sum(oi.qty * oi.price), 0) AS lifetime_spend
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
    AND (c.name ILIKE '%1%' OR c.email ILIKE '%1%')
  GROUP BY c.id, c.name, c.email
@@ -154,6 +159,7 @@ SELECT p.id, p.name, cat.name AS category_name, s.name AS seller_name,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
    AND p.name ILIKE '%1%'
    AND p.price >= 50
  GROUP BY p.id, p.name, cat.name, s.name

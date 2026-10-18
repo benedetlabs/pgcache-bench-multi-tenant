@@ -16,7 +16,7 @@ This skill defines the workflow for the **Telemetry & Performance Analyst Agent*
 Scrape `:9090/metrics` (or `http://127.0.0.1:59090/metrics` in local Docker) and inspect:
 
 ```bash
-curl -sf http://127.0.0.1:59090/metrics | grep -E "^pgcache_(queries_(total|cacheable|uncacheable|allowlist_skipped|cache_hit|cache_miss|cache_error)|cache_(queries_registered|memory_used_bytes|memo_entries|evictions|invalidations))"
+curl -sf http://127.0.0.1:59090/metrics | grep -E "^pgcache_(queries_(total|cacheable|uncacheable|allowlist_skipped|cache_hit|cache_miss|cache_error)|cache_(queries_registered|memory_used_bytes|memory_budget_bytes|memo_entries|evictions|invalidations|mv_gate|mv_hits|mv_fallthrough|mv_rebuilds))"
 ```
 
 | Metric | Expected Healthy Behavior | Diagnostic Meaning if Abnormal |
@@ -24,8 +24,12 @@ curl -sf http://127.0.0.1:59090/metrics | grep -E "^pgcache_(queries_(total|cach
 | `pgcache_queries_cacheable` | Increments on every benchmark `SELECT` | If not incrementing, queries are bypassing cache |
 | `pgcache_queries_uncacheable` | `0` delta during read sweeps | Query uses non-immutable functions, expression `GROUP BY`, or arithmetic in `OFFSET` |
 | `pgcache_queries_allowlist_skipped` | `0` | A table in the query is missing from `ALLOWED_TABLES` |
-| `pgcache_queries_cache_error` | `0` | Internal cache execution error |
-| `pgcache_queries_cache_hit` / `miss` | Hit ratio settles `>= 99%` after `warm_until_settled` | Cache capacity exhaustion (`MEMO_CACHE_SIZE`) or insufficient warm-up |
+| `pgcache_queries_cache_error` | `0` | Internal cache execution or embedded PostgreSQL recovery error (check for OOM `signal 9` in `/var/lib/postgresql/data/pgdata/logfile`) |
+| `pgcache_queries_cache_hit` / `miss` | Hit ratio settles `>= 99%` after `warm_until_settled` | Cache capacity exhaustion, missing tenant literal predicates on joined tables causing cross-tenant invalidations, or insufficient warm-up |
+| `pgcache_cache_mv_gate{outcome="admit"}` | Increments once per admitted complex query signature | Complex query admitted for Materialized View acceleration |
+| `pgcache_cache_mv_gate{outcome="reject"}` | `0` for complex queries (`OFFSET 0`) | Query uses `OFFSET > 0` or unsupported MV construct; falls back to base-table re-execution |
+| `pgcache_cache_mv_hits` / `mv_fallthrough` | `mv_hits` dominates after Pass 2 (`mv_fallthrough` settles near `0`) | If `mv_fallthrough` remains high, MVs are still building or being rebuilt/evicted |
+| `pgcache_cache_memory_used_bytes` | Below `pgcache_cache_memory_budget_bytes` (`MEMORY_LIMIT`) | In shared Docker VMs, set `MEMORY_LIMIT` (e.g. `3758096384` for 3.5 GiB) so `origin + pgcache` never trigger Linux kernel OOM-killer `SIGKILL` |
 
 ## 2. Analytical Framework for Comparing Simple vs Complex Workloads
 

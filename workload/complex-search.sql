@@ -28,8 +28,8 @@ SELECT c.id, c.name, c.email,
        count(DISTINCT o.id) AS order_cnt,
        coalesce(sum(oi.qty * oi.price), 0) AS lifetime_spend
   FROM customer c
-  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = c.tenant_id
-  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = c.tenant_id
+  LEFT JOIN orders o      ON o.customer_id = c.id AND o.tenant_id = :t
+  LEFT JOIN order_item oi ON oi.order_id = o.id AND oi.tenant_id = :t
  WHERE c.tenant_id = :t
    AND (c.name ILIKE '%1%' OR c.email ILIKE '%1%')
  GROUP BY c.id, c.name, c.email
@@ -50,6 +50,7 @@ SELECT p.id, p.name, cat.name AS category_name, s.name AS seller_name,
   JOIN seller s      ON s.id = p.seller_id
   LEFT JOIN review r ON r.product_id = p.id AND r.customer_id = o.customer_id
  WHERE oi.tenant_id = :t
+   AND o.tenant_id = :t
    AND p.name ILIKE '%1%'
    AND p.price >= 50
  GROUP BY p.id, p.name, cat.name, s.name
@@ -67,7 +68,7 @@ SELECT r.id, r.rating, r.body,
   JOIN customer c    ON c.id = r.customer_id
   JOIN product p     ON p.id = r.product_id
   JOIN category cat  ON cat.id = p.category_id
-  LEFT JOIN orders o ON o.customer_id = c.id AND o.tenant_id = c.tenant_id AND o.status = 'done'
+  LEFT JOIN orders o ON o.customer_id = c.id AND o.tenant_id = :t AND o.status = 'done'
  WHERE c.tenant_id = :t
    AND r.body ILIKE '%1%'
    AND r.rating >= 2
@@ -89,6 +90,8 @@ SELECT o.id AS order_id, o.status, o.created_at,
   JOIN product p     ON p.id = oi.product_id
   JOIN category cat  ON cat.id = p.category_id
  WHERE o.tenant_id = :t
+   AND oi.tenant_id = :t
+   AND c.tenant_id = :t
    AND (p.name ILIKE '%2%' OR c.email ILIKE '%2%')
    AND o.total >= 50
  GROUP BY o.id, o.status, o.created_at, c.name, p.name, cat.name

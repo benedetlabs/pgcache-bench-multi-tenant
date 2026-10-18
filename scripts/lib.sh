@@ -159,7 +159,7 @@ run() {
 warm_until_settled() {
   local host="$1" port="$2"; shift 2
   local prev=-1 cur h0 m0 f0 h1 m1 f1 p
-  local max_passes="${MAX_WARM_PASSES:-6}"
+  local max_passes="${MAX_WARM_PASSES:-8}"
   for p in $(seq 1 "$max_passes"); do
     read -r h0 m0 f0 <<<"$(scrape)"
     run "$host" "$port" "$DURATION" "$@" >/dev/null
@@ -180,7 +180,7 @@ warm_until_settled() {
 # released before starting an independent scenario sweep.
 reset_pgcache() {
   if [ "$BENCH_ENV" = "docker" ]; then
-    docker compose -f "$REPO_ROOT/infra/docker-compose.yml" up -d --force-recreate pgcache >/dev/null 2>&1
+    docker compose -f "$REPO_ROOT/infra/docker-compose.yml" up -d --force-recreate --renew-anon-volumes pgcache >/dev/null 2>&1
     local tries=0
     while [ $tries -lt 30 ]; do
       if curl -sf --connect-timeout 2 http://127.0.0.1:59090/metrics >/dev/null 2>&1 && \

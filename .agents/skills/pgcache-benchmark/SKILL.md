@@ -32,7 +32,7 @@ kubectl get nodes -L topology.kubernetes.io/zone
 kubectl -n pgcache-mt get events --sort-by=.lastTimestamp | grep -iE 'preempt|evict|NodeNotReady'
 ```
 
-> **Configuration Invariant**: When setting `MEMO_CACHE_SIZE` (e.g., in `infra/helm/pgcache-mt/values-do-tuned.yaml`), ALWAYS pass a raw integer byte string such as `"1073741824"` (1 GiB), never `"1GB"` or `"1Gi"`.
+> **Configuration Invariant**: When setting `MEMO_CACHE_SIZE` (e.g., in `infra/helm/pgcache-mt/values-do-tuned.yaml`) or `MEMORY_LIMIT` (in `infra/docker-compose.yml`), ALWAYS pass a raw integer byte string such as `"1073741824"` (1 GiB) or `"3758096384"` (3.5 GiB), never `"1GB"` or `"1Gi"`. In local Docker VMs (~8 GB RAM shared with `origin`), `MEMORY_LIMIT: "${MEMORY_LIMIT:-3758096384}"` prevents PgCache from claiming 6.3 GB and triggering Linux OOM-killer `SIGKILL` (`signal 9`) under sustained write loads.
 
 ## 2. Database Setup and Seeding
 
@@ -57,9 +57,9 @@ Before running long benchmark sweeps, always run the correctness & cacheability 
 DOCKER=1 ./scripts/verify-correctness.sh
 ```
 
-This verifies that:
-1. Every complex query returns byte-for-byte identical rows from Origin and PgCache (both on cache miss and cache hit).
-2. `pgcache_queries_uncacheable` delta is `0` and `pgcache_queries_cache_error` delta is `0`.
+This verifies across all 12 complex queries and 3 passes that:
+1. Every complex query returns byte-for-byte identical rows from Origin and PgCache (on initial miss, base-table hit, and warm Materialized View hit).
+2. `pgcache_queries_uncacheable` delta is `0`, `pgcache_queries_cache_error` delta is `0`, `pgcache_cache_mv_gate{outcome="admit"}` is `12` (`reject == 0`), and `pgcache_cache_mv_hits` delta is `12`.
 
 ## 4. Running Benchmark Sweeps
 
@@ -95,10 +95,10 @@ DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh scenarios
 DOCKER=1 ./scripts/04-complex-sweep.sh tenants
 
 # Sweep client concurrency (1..32) on complex-dashboard.sql:
-DOCKER=1 TENANTS=1000 ./scripts/04-complex-sweep.sh clients
+DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh clients
 
 # Sweep write ratios (0%, 5%, 10%) on complex-dashboard.sql:
-DOCKER=1 TENANTS=1000 ./scripts/04-complex-sweep.sh writes
+DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh writes
 ```
 
 ## 5. Non-Destructive Results & Cloud Lifecycle Hygiene

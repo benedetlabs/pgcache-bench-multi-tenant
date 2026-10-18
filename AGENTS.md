@@ -12,18 +12,19 @@ This repository contains a rigorous, reproducible benchmark comparing PostgreSQL
 1. **Simple Protocol (`-M simple`) and No Explicit Transactions**:
    - PgCache intercepts and caches queries only under simple query protocol with interpolated literals in the SQL text.
    - **NEVER** wrap benchmark scripts in `BEGIN ... COMMIT` blocks. PgCache passes transactions straight through to the origin, invalidating cache measurements.
-2. **100% Cacheability Gate (`pgcache_queries_uncacheable == 0`)**:
-   - In `pgbench` scripts, pre-compute arithmetic expressions (such as pagination offsets `\set off_rows :off * 10` or numeric thresholds `\set min_rev :rev_tier * 200`) using `\set` before interpolating them into SQL `OFFSET`, `WHERE`, or `HAVING` clauses.
-   - Group directly on base columns (`GROUP BY o.status`) and apply display wrappers (`SELECT coalesce(o.status, 'no_orders')`) in the projection list so PgCache classifies 100% of queries as cacheable (`pgcache_queries_uncacheable` delta must be `0`).
-   - Run `./scripts/verify-correctness.sh` to verify both `uncacheable_delta == 0` and byte-for-byte differential output equality between Origin and PgCache.
+2. **100% Cacheability & Materialized View Admission Gate (`pgcache_queries_uncacheable == 0` & `pgcache_cache_mv_gate{outcome="reject"} == 0`)**:
+   - In multi-table `JOIN` and `LEFT JOIN` queries, always include explicit `:t` literal predicates (`o.tenant_id = :t`, `oi.tenant_id = :t`, `c.tenant_id = :t`) on every joined tenant-scoped table so PgCache isolates CDC invalidations per tenant and pushes down tenant index predicates during population.
+   - Omit `OFFSET` (or use `OFFSET 0`) on complex multi-table `JOIN` and aggregation queries so 100% of queries pass PgCache 0.7+'s Materialized View gate (`pgcache_cache_mv_gate{outcome="admit"}`) and serve hits via `pgcache_cache_mv_hits`.
+   - In `pgbench` scripts, pre-compute any arithmetic expressions using `\set` before interpolating them into SQL `WHERE` or `HAVING` clauses, and group directly on base columns (`GROUP BY o.status`) rather than expressions (`SELECT coalesce(o.status, 'no_orders')`).
+   - Run `./scripts/verify-correctness.sh` to verify `uncacheable_delta == 0`, `mv_gate_reject_delta == 0`, `mv_hits_delta == 12`, and byte-for-byte differential output equality between Origin and PgCache across all 12 complex queries.
 3. **Mandatory Dynamic Warm-up (`warm_until_settled`)**:
    - **NEVER** use a fixed warm-up duration. Fixed warm-up times produce flawed hit ratio conclusions.
    - Always run iterative passes until the hit ratio settles (< 1% variation between consecutive passes).
 4. **Writes and DDL Exclusively on Origin**:
    - All schema migrations, setup scripts (`00-setup.sh`), seeds, and maintenance writes must target the origin (`$ORIGIN_HOST`) directly, never PgCache.
-5. **PgCache Environment Variables (`ALLOWED_TABLES` & `MEMO_CACHE_SIZE`)**:
+5. **PgCache Environment Variables (`ALLOWED_TABLES`, `MEMO_CACHE_SIZE`, & `MEMORY_LIMIT`)**:
    - If new tables are added to queries, they MUST be included in `ALLOWED_TABLES`. Queries referencing unlisted tables will silently miss cache.
-   - `MEMO_CACHE_SIZE` MUST be passed as a raw integer number of bytes (e.g., `"1073741824"` for 1 GiB), never with human-readable suffixes like `"1GB"` or `"1Gi"`, which fail Rust integer parsing at startup.
+   - `MEMO_CACHE_SIZE` and `MEMORY_LIMIT` MUST be passed as raw integer numbers of bytes (e.g., `"1073741824"` for 1 GiB or `"3758096384"` for 3.5 GiB), never with human-readable suffixes like `"1GB"` or `"1Gi"`, which fail Rust integer parsing at startup. In shared 8 GB Docker VMs, setting `MEMORY_LIMIT: "3758096384"` prevents PgCache from over-allocating host RAM and triggering Linux OOM-killer `SIGKILL` (`signal 9`).
 6. **Pod Tooling Constraints**:
    - The `loadgen` pod uses `postgres:17` and contains neither `curl` nor `wget`.
    - Prometheus metrics scraping from PgCache (`:9090/metrics` or `:9091/metrics`) MUST be performed via the `metrics-reader` pod (or host port `59090` in local Docker).
