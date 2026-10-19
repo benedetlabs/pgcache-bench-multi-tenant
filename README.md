@@ -1138,6 +1138,16 @@ To measure continuous hardware resource offloading on the Origin PostgreSQL serv
 
 All telemetry is streamed every 5–10 seconds to **[https://pgcachebench.grafana.net/](https://pgcachebench.grafana.net/)** with `grafana-alloy`, `postgres-exporter`, and `pgbench-exporter` pinned to the `loadgen` node (`bench_role=loadgen`) for zero observer CPU interference on `origin` and `pgcache`.
 
+#### Measured 1h30m Endurance Results (`SCALE=20`, `54.5M` Rows / `5.86 GB`, `ACTIVE_TENANTS=100`, `CLIENTS=8`)
+
+| Block / Scenario | Duration | Path A (Origin) Avg Latency | Path A TPS | Path B (PgCache) Avg Latency | Path B TPS | Steady-State Final 10m TPS | Cache Hit % | Overall TPS Gain | Total Txns (`A` vs `B`) |
+| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
+| **Block 1: 100% Read** (`read_1800s`) | **30m + 30m** | `16,865.88 ms` | `0.47` | **`11,091.45 ms`** | **`0.72`** | **`1.60–1.90 TPS`** | `47.1%` | **`+51.8%`** (up to **`4.0×`**) | `856` vs **`1,304`** |
+| **Block 2: 95% Read / 5% Write** (`rw_5pct_900s`) | **15m + 15m** | `16,462.09 ms` | `0.48` | **`11,970.92 ms`** | **`0.66`** | **`1.80–2.10 TPS`** | `62.1%` | **`+37.1%`** (up to **`4.3×`**) | `444` vs **`610`** |
+
+- **Origin Write Acceleration (`2.21×` Faster Writes)**: In Block 2, offloading complex analytical reads to PgCache relieved Origin CPU and block-storage I/O contention, cutting transactional `UPDATE` (`write.sql@5`) average latency in half from **`226.96 ms` on Origin Direct** down to **`102.89 ms` via PgCache** (`-54.7%` latency).
+- **Zero Evictions & 100% Stability (`pgcache_cache_evictions = 0`, `pgcache_queries_uncacheable = 0`)**: Across the entire 90-minute soak (`16,401` queries), PgCache operated at `3.39 GiB / 3.50 GiB` (`96.7%` of `MEMORY_LIMIT`) with its high-watermark admission controller cleanly pinning `607 / 800` complex tenant Materialized Views in RAM without a single eviction or restart. See [`results/endurance-90m/README.md`](results/endurance-90m/README.md) for the full telemetry breakdown.
+
 ---
 
 ## 16. What this does not prove

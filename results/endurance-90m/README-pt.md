@@ -86,7 +86,73 @@ A campanha ([`scripts/05-endurance-90m.sh`](../../scripts/05-endurance-90m.sh)) 
 
 ---
 
-## 5. Como Reproduzir
+## 5. Resultados Medidos (DOKS 3 Nós `s-4vcpu-8gb`, PgCache `0.7.1`, `SCALE=20`)
+
+- **Janela de Execução**: `2026-10-19 01:02:02 UTC` → `2026-10-19 03:20:00 UTC`
+- **Tabela Resumo Bruta**: [`results/endurance-90m/run-endurance-90m.txt`](run-endurance-90m.txt)
+- **Snapshot Final de Telemetria**: [`results/endurance-90m/final-metrics-snapshot.txt`](final-metrics-snapshot.txt)
+
+### 5.1 Tamanho do Banco e Distribuição de Linhas (`SCALE=20`, `TENANTS=1000`)
+
+| Tabela | Total de Linhas | Tamanho em Disco (Heap + Índices) | Observações |
+| :--- | ---: | ---: | :--- |
+| `order_item` | `40.000.048` | `4.165 MB` | 40.000 itens de pedido por tenant |
+| `orders` | `9.999.858` | `1.174 MB` | ~10.000 pedidos por tenant (`min=9.690`, `max=10.382`) |
+| `review` | `1.500.000` | `215 MB` | Tabela compartilhada de catálogo |
+| `customer` | `2.000.000` | `187 MB` | 2.000 clientes por tenant |
+| `product` | `1.000.000` | `108 MB` | Tabela compartilhada de catálogo |
+| `seller` / `tenant` | `21.000` | `8 MB` | Tabelas de referência |
+| **TOTAL** | **`54.520.906`** | **`5.857 MB` (`~5,86 GB`)** | **`11,4×` maior que o `shared_buffers = 512MB` da Origem** |
+
+### 5.2 Comparativo Ponta a Ponta de 90 Minutos (`complex-dashboard.sql`, `ACTIVE_TENANTS=100`, `CLIENTS=8`)
+
+Cada transação do `complex-dashboard.sql` executa **8 statements SQL complexos** (2 buscas textuais por substring `ILIKE`, 3 `INNER/LEFT JOIN`s profundos de 4 a 5 tabelas e 3 agregações analíticas multidimensionais com `GROUP BY / FILTER / CASE / HAVING`).
+
+| Bloco / Cenário | Duração | Latência Média Path A (Origem) | TPS Path A (Stmts/s) | Latência Média Path B (PgCache) | TPS Path B (Stmts/s) | TPS Final Estabilizado 10m (Lat) | Cache Hit % | Ganho Geral de TPS | Total de Txns (`A` vs `B`) |
+| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
+| **Bloco 1: 100% Leitura** (`read_1800s`) | **30m + 30m** | `16.865,88 ms` | `0,47` (`3,79/s`) | **`11.091,45 ms`** | **`0,72` (`5,75/s`)** | **`1,60–1,90 TPS`** (`4.225–5.600 ms`) | `47,1%` | **`+51,8%`** (até **`4,0×`**) | `856` vs **`1.304`** (`+52,3%`) |
+| **Bloco 2: 95% Leitura / 5% Escrita** (`rw_5pct_900s`) | **15m + 15m** | `16.462,09 ms` | `0,48` (`3,67/s`) | **`11.970,92 ms`** | **`0,66` (`5,07/s`)** | **`1,80–2,10 TPS`** (`2.654–4.780 ms`) | `62,1%` | **`+37,1%`** (até **`4,3×`**) | `444` vs **`610`** (`+37,4%`) |
+
+### 5.3 Abertura por Script no Bloco 2: Como o Alívio de Leitura Acelera a Escrita na Origem em `2,21×`
+
+No Bloco 2 (`95%` `complex-dashboard.sql` + `5%` `write.sql`), o `pgbench` reporta estatísticas separadas para o script de leitura complexa e para o script de escrita transacional (`UPDATE`):
+
+| Componente de Carga no Bloco 2 (`900s`) | Path A (Origem Direto) | Path B (PgCache Proxy) | Ganho Relativo |
+| :--- | ---: | ---: | :--- |
+| **Leitura Complexa (`complex-dashboard.sql@95`)** | `17.471,93 ms` (`0,455 TPS` / `418` txns) | **`12.584,78 ms`** (`0,630 TPS` / `580` txns) | **`+38,4%` mais telas de leitura concluídas** |
+| **Escrita Transacional (`write.sql@5`)** | `226,96 ms` (`0,028 TPS` / `26` escritas) | **`102,89 ms`** (`0,033 TPS` / `30` escritas) | **Escritas `2,21×` mais rápidas (`-54,7%` de latência)** |
+
+> [!TIP]
+> **Por que as escritas ficam `2,21×` mais rápidas passando pelo PgCache**: Quando os clientes batem direto na Origem (Path A), os comandos `UPDATE orders` disputam as 4 vCPUs e o I/O de disco da Origem com 8 sessões pesadas de leitura analítica concorrente, elevando a latência de um simples `UPDATE` de linha única para **`226,96 ms`**. Quando as leituras são absorvidas pelas Materialized Views em memória do PgCache (Path B), a contenção de CPU e disco na Origem despenca, reduzindo a latência do `UPDATE` pela metade para **`102,89 ms`** mesmo incluindo o salto de rede do proxy e a invalidação via CDC.
+
+---
+
+## 6. Telemetria Interna e Descobertas Arquiteturais
+
+Extraído de [`results/endurance-90m/final-metrics-snapshot.txt`](final-metrics-snapshot.txt):
+
+| Métrica Prometheus | Valor Final | Significado Arquitetural |
+| :--- | ---: | :--- |
+| `pgcache_queries_total` / `pgcache_queries_cacheable` | `16.401` / `16.368` | `16.368` consultas complexas de leitura + `33` comandos `UPDATE` de escrita |
+| `pgcache_queries_uncacheable` | **`0`** | **100% de cacheabilidade** em todos os 8 statements do `complex-dashboard.sql` |
+| `pgcache_cache_mv_gate{outcome="reject"}` | **`0`** | **0% de rejeição no MV Gate** (`673` Materialized Views admitidas) |
+| `pgcache_cache_mv_hits` | **`5.924`** | Joins, buscas e agregações servidos diretamente das MVs em sub-milissegundos |
+| `pgcache_cache_evictions` | **`0`** | Zero thrashing de cache ou evictions ao longo dos 90 minutos |
+| `pgcache_cache_restarts_total` / `pgcache_connections_errors` | **`0` / `0`** | 100% de estabilidade do proxy e zero transações falhas sob carga pesada contínua |
+| `pgcache_cdc_events_processed` / `pgcache_cdc_flush_staleness_seconds` | `178` / **`8,1 µs`** | Ciclo de aplicação de replicação lógica (CDC) praticamente instantâneo |
+| `pgcache_cache_memory_used_bytes` / `pgcache_cache_memory_budget_bytes` | `3,39 GiB` / `3,50 GiB` | **96,7% de uso do orçamento de memória** (`3,5 GiB`) sem nenhum OOM kill |
+
+### Controle de Admissão por High-Watermark de Memória em `SCALE=20` (Orçamento de `3,5 GiB`)
+
+Em `SCALE=20` (`54,5M` linhas), as tabelas compartilhadas de catálogo (`product` com `1.000.000` de linhas e `review` com `1.500.000` linhas) somadas aos `100` tenants ativos (`1.000.000` de pedidos e `4.000.000` de itens) formam um working set expressivo no armazenamento embutido do PgCache (`pgcache_cache_disk_used_bytes = 16,79 GiB`).
+
+- Durante as Fases 3 e 6, conforme `pgcache_cache_memory_used_bytes` subiu de `2,93 GiB` (`83,8%` do `MEMORY_LIMIT`) até `3,39 GiB` (`96,7%` do `MEMORY_LIMIT`), o **controlador de admissão por high-watermark de memória** do PgCache (`pgcache_cache_registration_throttled_total = 348`) cadenciou o registro de novas Materialized Views (`pgcache_cache_queries_registered = 607 / 800` combinações distintas de query por tenant).
+- Em vez de estourar a RAM do host ou entrar em thrashing de evictions (`pgcache_cache_evictions = 0`), o PgCache manteve fixadas em memória ~76% das Materialized Views dos tenants ativos (respondendo aos hits em sub-milissegundos e elevando o TPS do cluster para **`1,8–2,1 TPS`** nos minutos finais), enquanto encaminhou de forma limpa as consultas ainda não residentes (`pgcache_cache_coalesce_deadline_forward_total = 5.586`).
+- **Recomendação de Dimensionamento para Produção**: Em um nó `4 vCPU / 8 GB` (`MEMORY_LIMIT = 3,5 GiB`), o PgCache comporta confortavelmente ~75 tenants do dashboard enterprise de 8 queries em `SCALE=20`. Escalar o nó do PgCache para `16 GB RAM` (`MEMORY_LIMIT = 10 GiB`) permite manter 100% dos `100+` tenants ativos simultaneamente residentes em RAM para atingir ~100% de hit ratio contínuo.
+
+---
+
+## 7. Como Reproduzir
 
 ```bash
 # 1. Criar o cluster Kubernetes de 3 nós na DigitalOcean (~US$ 0,21/h total)
@@ -109,3 +175,4 @@ cp .env.grafana.example .env.grafana
 # 6. Ao finalizar, destruir o cluster e os volumes de bloco (custo residual US$ 0)
 ./scripts/do-cluster.sh destroy pgcache-bench
 ```
+

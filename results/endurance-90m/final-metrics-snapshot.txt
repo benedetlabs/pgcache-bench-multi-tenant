@@ -1,0 +1,1076 @@
+=== PGCACHE METRICS (:9091/metrics) ===
+# TYPE pgcache_cache_registration_throttled_total counter
+pgcache_cache_registration_throttled_total 348
+
+# TYPE pgcache_cache_mv_builds_suppressed counter
+pgcache_cache_mv_builds_suppressed 0
+
+# TYPE pgcache_raw_writes_recorded counter
+pgcache_raw_writes_recorded 33
+
+# TYPE pgcache_cache_readmissions counter
+pgcache_cache_readmissions 1556
+
+# TYPE pgcache_queries_invalid counter
+pgcache_queries_invalid 0
+
+# TYPE pgcache_cache_mv_fallthrough counter
+pgcache_cache_mv_fallthrough 2268
+
+# TYPE pgcache_cache_handle_deletes counter
+pgcache_cache_handle_deletes 0
+
+# TYPE pgcache_protocol_close_local counter
+pgcache_protocol_close_local 0
+
+# TYPE pgcache_protocol_describe_cache_invalidations counter
+pgcache_protocol_describe_cache_invalidations 0
+
+# TYPE pgcache_raw_serve_disjoint_update counter
+pgcache_raw_serve_disjoint_update 0
+
+# TYPE pgcache_cache_serve_dirty_return_total counter
+pgcache_cache_serve_dirty_return_total 0
+
+# TYPE pgcache_raw_cap_degraded_insert counter
+pgcache_raw_cap_degraded_insert 0
+
+# TYPE pgcache_cache_pool_recycled counter
+pgcache_cache_pool_recycled 0
+
+# TYPE pgcache_cache_memo_captures counter
+pgcache_cache_memo_captures 0
+
+# TYPE pgcache_conn_settings_probes counter
+pgcache_conn_settings_probes 126
+
+# TYPE pgcache_txn_served counter
+pgcache_txn_served 0
+
+# TYPE pgcache_cache_pool_replenished counter
+pgcache_cache_pool_replenished 47
+
+# TYPE pgcache_protocol_extended_queries counter
+pgcache_protocol_extended_queries 0
+
+# TYPE pgcache_cache_subsumptions counter
+pgcache_cache_subsumptions 0
+
+# TYPE pgcache_protocol_lazy_parse_forwarded counter
+pgcache_protocol_lazy_parse_forwarded 0
+
+# TYPE pgcache_queries_cache_error counter
+pgcache_queries_cache_error 47
+
+# TYPE pgcache_cache_reference_only_forward_total counter
+pgcache_cache_reference_only_forward_total 0
+
+# TYPE pgcache_cdc_keepalive_marks_coalesced counter
+pgcache_cdc_keepalive_marks_coalesced 4
+
+# TYPE pgcache_protocol_describe_cache_evictions counter
+pgcache_protocol_describe_cache_evictions 0
+
+# TYPE pgcache_cache_invalidations counter
+pgcache_cache_invalidations 1735
+
+# TYPE pgcache_raw_tier_merges counter
+pgcache_raw_tier_merges 0
+
+# TYPE pgcache_cache_memo_hits counter
+pgcache_cache_memo_hits 0
+
+# TYPE pgcache_cache_serve_stall_total counter
+pgcache_cache_serve_stall_total 47
+
+# TYPE pgcache_cache_population_scale_down counter
+pgcache_cache_population_scale_down 36
+
+# TYPE pgcache_cache_mv_dirty_truncates counter
+pgcache_cache_mv_dirty_truncates 0
+
+# TYPE pgcache_protocol_describe_cache_hits counter
+pgcache_protocol_describe_cache_hits 0
+
+# TYPE pgcache_cache_mv_hits counter
+pgcache_cache_mv_hits 5924
+
+# TYPE pgcache_cache_restarts_total counter
+pgcache_cache_restarts_total 0
+
+# TYPE pgcache_raw_forwards counter
+pgcache_raw_forwards{scope="table"} 65
+pgcache_raw_forwards{scope="connection"} 0
+
+# TYPE pgcache_cache_mv_gate counter
+pgcache_cache_mv_gate{outcome="reject"} 0
+pgcache_cache_mv_gate{outcome="admit"} 673
+
+# TYPE pgcache_raw_serve_disjoint_delete counter
+pgcache_raw_serve_disjoint_delete 0
+
+# TYPE pgcache_queries_unsupported counter
+pgcache_queries_unsupported 33
+
+# TYPE pgcache_raw_forward_blocked counter
+pgcache_raw_forward_blocked{cause="apply_lag"} 39
+pgcache_raw_forward_blocked{cause="unstamped"} 25
+pgcache_raw_forward_blocked{cause="delivery_lag"} 1
+
+# TYPE pgcache_protocol_simple_queries counter
+pgcache_protocol_simple_queries 16401
+
+# TYPE pgcache_connections_errors counter
+pgcache_connections_errors 0
+
+# TYPE pgcache_raw_probes counter
+pgcache_raw_probes 33
+
+# TYPE pgcache_cache_cdc_prepared_misses counter
+pgcache_cache_cdc_prepared_misses 3
+
+# TYPE pgcache_cache_cdc_pg_eval_hits counter
+pgcache_cache_cdc_pg_eval_hits 57
+
+# TYPE pgcache_cache_coalesce_deadline_forward_total counter
+pgcache_cache_coalesce_deadline_forward_total 5586
+
+# TYPE pgcache_connections_total counter
+pgcache_connections_total 126
+
+# TYPE pgcache_cache_mv_rebuilds counter
+pgcache_cache_mv_rebuilds 1013
+
+# TYPE pgcache_txn_forwards counter
+pgcache_txn_forwards{reason="pending_write"} 0
+pgcache_txn_forwards{reason="isolation_strict"} 0
+pgcache_txn_forwards{reason="isolation_unknown"} 0
+pgcache_txn_forwards{reason="failed"} 0
+
+# TYPE pgcache_queries_cache_miss counter
+pgcache_queries_cache_miss 8111
+
+# TYPE pgcache_cdc_updates counter
+pgcache_cdc_updates 59
+
+# TYPE pgcache_queries_cache_hit counter
+pgcache_queries_cache_hit 8145
+
+# TYPE pgcache_cache_handle_inserts counter
+pgcache_cache_handle_inserts 0
+
+# TYPE pgcache_log_dropped_lines counter
+pgcache_log_dropped_lines 0
+
+# TYPE pgcache_cdc_deletes counter
+pgcache_cdc_deletes 0
+
+# TYPE pgcache_cdc_inserts counter
+pgcache_cdc_inserts 0
+
+# TYPE pgcache_cache_memo_evictions counter
+pgcache_cache_memo_evictions 0
+
+# TYPE pgcache_cache_handle_updates counter
+pgcache_cache_handle_updates 59
+
+# TYPE pgcache_cache_serve_pool_backstop_grows counter
+pgcache_cache_serve_pool_backstop_grows 0
+
+# TYPE pgcache_protocol_describe_cache_misses counter
+pgcache_protocol_describe_cache_misses 0
+
+# TYPE pgcache_cache_population_scale_up counter
+pgcache_cache_population_scale_up 92
+
+# TYPE pgcache_cache_cdc_local_eval_hits counter
+pgcache_cache_cdc_local_eval_hits 0
+
+# TYPE pgcache_cache_cdc_toast_repairs counter
+pgcache_cache_cdc_toast_repairs 0
+
+# TYPE pgcache_raw_serve_disjoint_insert counter
+pgcache_raw_serve_disjoint_insert 0
+
+# TYPE pgcache_queries_uncacheable counter
+pgcache_queries_uncacheable 0
+
+# TYPE pgcache_cache_merge_chunks_total counter
+pgcache_cache_merge_chunks_total 22934
+
+# TYPE pgcache_queries_cacheable counter
+pgcache_queries_cacheable 16368
+
+# TYPE pgcache_cache_population_backstop_grows counter
+pgcache_cache_population_backstop_grows 54
+
+# TYPE pgcache_queries_allowlist_skipped counter
+pgcache_queries_allowlist_skipped 0
+
+# TYPE pgcache_cache_serve_settings_applied counter
+pgcache_cache_serve_settings_applied 63
+
+# TYPE pgcache_queries_total counter
+pgcache_queries_total 16401
+
+# TYPE pgcache_cache_cdc_toast_stale_aborts counter
+pgcache_cache_cdc_toast_stale_aborts 0
+
+# TYPE pgcache_cache_merge_discard_chunks_total counter
+pgcache_cache_merge_discard_chunks_total 3610
+
+# TYPE pgcache_cache_serve_pool_scale_down counter
+pgcache_cache_serve_pool_scale_down 0
+
+# TYPE pgcache_raw_cap_degraded_update_delete counter
+pgcache_raw_cap_degraded_update_delete 0
+
+# TYPE pgcache_cdc_events_processed counter
+pgcache_cdc_events_processed 178
+
+# TYPE pgcache_cache_cdc_toast_fallbacks counter
+pgcache_cache_cdc_toast_fallbacks 0
+
+# TYPE pgcache_cache_merge_applied_total counter
+pgcache_cache_merge_applied_total 756
+
+# TYPE pgcache_cache_evictions counter
+pgcache_cache_evictions{result="pinned_bump"} 0
+pgcache_cache_evictions 0
+pgcache_cache_evictions{result="bump"} 0
+
+# TYPE pgcache_cache_cdc_prepared_hits counter
+pgcache_cache_cdc_prepared_hits 55
+
+# TYPE pgcache_cache_coalesce_served counter
+pgcache_cache_coalesce_served 0
+
+# TYPE pgcache_cache_mv_skipped_rebuilds counter
+pgcache_cache_mv_skipped_rebuilds 21
+
+# TYPE pgcache_cache_serve_pool_scale_up counter
+pgcache_cache_serve_pool_scale_up 0
+
+# TYPE pgcache_cache_serve_desync_total counter
+pgcache_cache_serve_desync_total 0
+
+# TYPE pgcache_cache_queries_registered gauge
+pgcache_cache_queries_registered 607
+
+# TYPE pgcache_cache_queries_invalidated gauge
+pgcache_cache_queries_invalidated 104
+
+# TYPE pgcache_cdc_applied_lsn gauge
+pgcache_cdc_applied_lsn 11925761712
+
+# TYPE pgcache_cache_reg_gate_queue_min gauge
+pgcache_cache_reg_gate_queue_min 0
+
+# TYPE pgcache_cache_memo_entries gauge
+pgcache_cache_memo_entries 0
+
+# TYPE pgcache_cache_mv_build_queue gauge
+pgcache_cache_mv_build_queue 20
+
+# TYPE pgcache_cache_reg_gate_rate gauge
+pgcache_cache_reg_gate_rate 20
+
+# TYPE pgcache_cache_marginal_bytes_per_query gauge
+pgcache_cache_marginal_bytes_per_query 0
+
+# TYPE pgcache_cache_memo_bytes gauge
+pgcache_cache_memo_bytes 0
+
+# TYPE pgcache_cache_reg_gate_btlbw gauge
+pgcache_cache_reg_gate_btlbw 4
+
+# TYPE pgcache_protocol_prepared_statements gauge
+pgcache_protocol_prepared_statements 0
+
+# TYPE pgcache_cache_merge_pending_depth gauge
+pgcache_cache_merge_pending_depth 0
+
+# TYPE pgcache_cache_disk_total_bytes gauge
+pgcache_cache_disk_total_bytes 168881938432
+
+# TYPE pgcache_cache_writer_update_queries_max_per_relation gauge
+pgcache_cache_writer_update_queries_max_per_relation 607
+
+# TYPE pgcache_cache_generation gauge
+pgcache_cache_generation 2359
+
+# TYPE pgcache_cache_disk_available_bytes gauge
+pgcache_cache_disk_available_bytes 150850174976
+
+# TYPE pgcache_cache_serves_in_flight gauge
+pgcache_cache_serves_in_flight 0
+
+# TYPE pgcache_cdc_lag_bytes gauge
+pgcache_cdc_lag_bytes 30800
+
+# TYPE pgcache_cache_worker_queue gauge
+pgcache_cache_worker_queue 0
+
+# TYPE pgcache_cache_writer_cdc_queue gauge
+pgcache_cache_writer_cdc_queue 0
+
+# TYPE pgcache_cdc_flushed_lsn gauge
+pgcache_cdc_flushed_lsn 11925761712
+
+# TYPE pgcache_cache_serve_pool_size gauge
+pgcache_cache_serve_pool_size 16
+
+# TYPE pgcache_cache_tables_tracked gauge
+pgcache_cache_tables_tracked 7
+
+# TYPE pgcache_connections_cacheability_entries gauge
+pgcache_connections_cacheability_entries 0
+
+# TYPE pgcache_cache_memo_slots gauge
+pgcache_cache_memo_slots 1
+
+# TYPE pgcache_connections_active gauge
+pgcache_connections_active 0
+
+# TYPE pgcache_cache_pool_available gauge
+pgcache_cache_pool_available 15
+
+# TYPE pgcache_cache_queries_loading gauge
+pgcache_cache_queries_loading 0
+
+# TYPE pgcache_cache_reg_gate_loading gauge
+pgcache_cache_reg_gate_loading 0
+
+# TYPE pgcache_cache_query_count_cap gauge
+pgcache_cache_query_count_cap 0
+
+# TYPE pgcache_cache_population_workers gauge
+pgcache_cache_population_workers 60
+
+# TYPE pgcache_cache_writer_update_queries_total gauge
+pgcache_cache_writer_update_queries_total 3021
+
+# TYPE pgcache_cache_registration_throttled gauge
+pgcache_cache_registration_throttled 0
+
+# TYPE pgcache_cache_disk_used_bytes gauge
+pgcache_cache_disk_used_bytes 18031763456
+
+# TYPE pgcache_cache_writer_internal_queue gauge
+pgcache_cache_writer_internal_queue 0
+
+# TYPE pgcache_cache_memory_budget_bytes gauge
+pgcache_cache_memory_budget_bytes 3758096384
+
+# TYPE pgcache_cache_rss_bytes gauge
+pgcache_cache_rss_bytes 322514944
+
+# TYPE pgcache_cdc_flush_staleness_seconds gauge
+pgcache_cdc_flush_staleness_seconds 0.0000081
+
+# TYPE pgcache_cache_population_queue gauge
+pgcache_cache_population_queue 0
+
+# TYPE pgcache_cdc_lag_seconds gauge
+pgcache_cdc_lag_seconds -0.0029
+
+# TYPE pgcache_cache_memory_used_bytes gauge
+pgcache_cache_memory_used_bytes 3635855360
+
+# TYPE pgcache_cache_reg_gate_drain_rate gauge
+pgcache_cache_reg_gate_drain_rate 0
+
+# TYPE pgcache_cache_coalesce_waiting gauge
+pgcache_cache_coalesce_waiting 0
+
+# TYPE pgcache_cache_queries_pending gauge
+pgcache_cache_queries_pending 0
+
+# TYPE pgcache_cache_writer_query_queue gauge
+pgcache_cache_writer_query_queue 0
+
+# TYPE pgcache_cache_disk_limit_bytes gauge
+pgcache_cache_disk_limit_bytes 160437841511
+
+# TYPE pgcache_cdc_received_lsn gauge
+pgcache_cdc_received_lsn 11925761712
+
+# TYPE pgcache_cache_population_task_seconds summary
+pgcache_cache_population_task_seconds{quantile="0.5"} 0
+pgcache_cache_population_task_seconds{quantile="0.95"} 0
+pgcache_cache_population_task_seconds{quantile="0.99"} 0
+pgcache_cache_population_task_seconds_sum 32522.578543877993
+pgcache_cache_population_task_seconds_count 2152
+
+# TYPE pgcache_query_stage_conn_wait_seconds summary
+pgcache_query_stage_conn_wait_seconds{quantile="0.5"} 0
+pgcache_query_stage_conn_wait_seconds{quantile="0.95"} 0
+pgcache_query_stage_conn_wait_seconds{quantile="0.99"} 0
+pgcache_query_stage_conn_wait_seconds_sum 0.019111835999999913
+pgcache_query_stage_conn_wait_seconds_count 8145
+
+# TYPE pgcache_query_stage_queue_wait_seconds summary
+pgcache_query_stage_queue_wait_seconds{quantile="0.5"} 0
+pgcache_query_stage_queue_wait_seconds{quantile="0.95"} 0
+pgcache_query_stage_queue_wait_seconds{quantile="0.99"} 0
+pgcache_query_stage_queue_wait_seconds_sum 0.16074694099999984
+pgcache_query_stage_queue_wait_seconds_count 8145
+
+# TYPE pgcache_cache_population_stream_seconds summary
+pgcache_cache_population_stream_seconds{quantile="0.5"} 0
+pgcache_cache_population_stream_seconds{quantile="0.95"} 0
+pgcache_cache_population_stream_seconds{quantile="0.99"} 0
+pgcache_cache_population_stream_seconds_sum 31672.008985275967
+pgcache_cache_population_stream_seconds_count 7680
+
+# TYPE pgcache_query_stage_lookup_seconds summary
+pgcache_query_stage_lookup_seconds{quantile="0.5"} 0
+pgcache_query_stage_lookup_seconds{quantile="0.95"} 0
+pgcache_query_stage_lookup_seconds{quantile="0.99"} 0
+pgcache_query_stage_lookup_seconds_sum 93.24327336699967
+pgcache_query_stage_lookup_seconds_count 16116
+
+# TYPE pgcache_cache_lookup_latency_seconds summary
+pgcache_cache_lookup_latency_seconds{quantile="0.5"} 0
+pgcache_cache_lookup_latency_seconds{quantile="0.95"} 0
+pgcache_cache_lookup_latency_seconds{quantile="0.99"} 0
+pgcache_cache_lookup_latency_seconds_sum 0.03657785299999999
+pgcache_cache_lookup_latency_seconds_count 16163
+
+# TYPE pgcache_cache_writer_register_publication_update_seconds summary
+pgcache_cache_writer_register_publication_update_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_publication_update_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_publication_update_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_publication_update_seconds_sum 0.107648699
+pgcache_cache_writer_register_publication_update_seconds_count 4
+
+# TYPE pgcache_query_origin_latency_seconds summary
+pgcache_query_origin_latency_seconds{quantile="0.5"} 0
+pgcache_query_origin_latency_seconds{quantile="0.95"} 0
+pgcache_query_origin_latency_seconds{quantile="0.99"} 0
+pgcache_query_origin_latency_seconds_sum 19474.142375828964
+pgcache_query_origin_latency_seconds_count 8256
+
+# TYPE pgcache_cache_handle_insert_seconds summary
+pgcache_cache_handle_insert_seconds{quantile="0.5"} 0
+pgcache_cache_handle_insert_seconds{quantile="0.95"} 0
+pgcache_cache_handle_insert_seconds{quantile="0.99"} 0
+pgcache_cache_handle_insert_seconds_sum 0
+pgcache_cache_handle_insert_seconds_count 0
+
+# TYPE pgcache_query_stage_forward_decision_seconds summary
+pgcache_query_stage_forward_decision_seconds{quantile="0.5"} 0
+pgcache_query_stage_forward_decision_seconds{quantile="0.95"} 0
+pgcache_query_stage_forward_decision_seconds{quantile="0.99"} 0
+pgcache_query_stage_forward_decision_seconds_sum 3604.5272386840115
+pgcache_query_stage_forward_decision_seconds_count 8111
+
+# TYPE pgcache_cache_merge_chunk_seconds summary
+pgcache_cache_merge_chunk_seconds{quantile="0.5"} 0.021586222440414606
+pgcache_cache_merge_chunk_seconds{quantile="0.95"} 0.10964581054541356
+pgcache_cache_merge_chunk_seconds{quantile="0.99"} 0.14644578146668655
+pgcache_cache_merge_chunk_seconds_sum 4079.8115495489724
+pgcache_cache_merge_chunk_seconds_count 26544
+
+# TYPE pgcache_query_stage_response_write_seconds summary
+pgcache_query_stage_response_write_seconds{quantile="0.5"} 0
+pgcache_query_stage_response_write_seconds{quantile="0.95"} 0
+pgcache_query_stage_response_write_seconds{quantile="0.99"} 0
+pgcache_query_stage_response_write_seconds_sum 0.7282562670000017
+pgcache_query_stage_response_write_seconds_count 8145
+
+# TYPE pgcache_query_stage_total_seconds summary
+pgcache_query_stage_total_seconds{quantile="0.5"} 0
+pgcache_query_stage_total_seconds{quantile="0.95"} 0
+pgcache_query_stage_total_seconds{quantile="0.99"} 0
+pgcache_query_stage_total_seconds_sum 25251.145860351084
+pgcache_query_stage_total_seconds_count 16321
+
+# TYPE pgcache_query_stage_coalesce_intake_seconds summary
+pgcache_query_stage_coalesce_intake_seconds{quantile="0.5"} 0
+pgcache_query_stage_coalesce_intake_seconds{quantile="0.95"} 0
+pgcache_query_stage_coalesce_intake_seconds{quantile="0.99"} 0
+pgcache_query_stage_coalesce_intake_seconds_sum 0.005830919000000018
+pgcache_query_stage_coalesce_intake_seconds_count 5611
+
+# TYPE pgcache_cache_population_wait_seconds summary
+pgcache_cache_population_wait_seconds{quantile="0.5"} 0
+pgcache_cache_population_wait_seconds{quantile="0.95"} 0
+pgcache_cache_population_wait_seconds{quantile="0.99"} 0
+pgcache_cache_population_wait_seconds_sum 22761.26052514598
+pgcache_cache_population_wait_seconds_count 2152
+
+# TYPE pgcache_cache_writer_resolve_update_queries_register_seconds summary
+pgcache_cache_writer_resolve_update_queries_register_seconds{quantile="0.5"} 0
+pgcache_cache_writer_resolve_update_queries_register_seconds{quantile="0.95"} 0
+pgcache_cache_writer_resolve_update_queries_register_seconds{quantile="0.99"} 0
+pgcache_cache_writer_resolve_update_queries_register_seconds_sum 0.25364928500000006
+pgcache_cache_writer_resolve_update_queries_register_seconds_count 803
+
+# TYPE pgcache_cache_writer_register_subsume_seconds summary
+pgcache_cache_writer_register_subsume_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_subsume_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_subsume_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_subsume_seconds_sum 0
+pgcache_cache_writer_register_subsume_seconds_count 0
+
+# TYPE pgcache_query_registration_latency_seconds summary
+pgcache_query_registration_latency_seconds{quantile="0.5"} 0
+pgcache_query_registration_latency_seconds{quantile="0.95"} 0
+pgcache_query_registration_latency_seconds{quantile="0.99"} 0
+pgcache_query_registration_latency_seconds_sum 726184.8627964804
+pgcache_query_registration_latency_seconds_count 756
+
+# TYPE pgcache_query_cache_latency_seconds summary
+pgcache_query_cache_latency_seconds{quantile="0.5"} 0
+pgcache_query_cache_latency_seconds{quantile="0.95"} 0
+pgcache_query_cache_latency_seconds{quantile="0.99"} 0
+pgcache_query_cache_latency_seconds_sum 6347.332952142008
+pgcache_query_cache_latency_seconds_count 8145
+
+# TYPE pgcache_query_stage_worker_exec_seconds summary
+pgcache_query_stage_worker_exec_seconds{quantile="0.5"} 0
+pgcache_query_stage_worker_exec_seconds{quantile="0.95"} 0
+pgcache_query_stage_worker_exec_seconds{quantile="0.99"} 0
+pgcache_query_stage_worker_exec_seconds_sum 6344.853399972008
+pgcache_query_stage_worker_exec_seconds_count 8145
+
+# TYPE pgcache_cache_writer_command_handle_seconds summary
+pgcache_cache_writer_command_handle_seconds{cmd="register",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="register",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="register",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="register"} 1.7186050839999991
+pgcache_cache_writer_command_handle_seconds_count{cmd="register"} 2359
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="mv_build"} 0.23463084900000006
+pgcache_cache_writer_command_handle_seconds_count{cmd="mv_build"} 1063
+pgcache_cache_writer_command_handle_seconds{cmd="readmit",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="readmit",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="readmit",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="readmit"} 0
+pgcache_cache_writer_command_handle_seconds_count{cmd="readmit"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_commit_mark",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_commit_mark",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_commit_mark",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_commit_mark"} 7.6250002320000005
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_commit_mark"} 59
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_table_register",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_table_register",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_table_register",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_table_register"} 0.000042067
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_table_register"} 1
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_update",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_update",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_update",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_update"} 0.00018444000000000002
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_update"} 59
+pgcache_cache_writer_command_handle_seconds{cmd="resolve",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="resolve",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="resolve",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="resolve"} 0.6852746670000017
+pgcache_cache_writer_command_handle_seconds_count{cmd="resolve"} 813
+pgcache_cache_writer_command_handle_seconds{cmd="limit_bump",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="limit_bump",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="limit_bump",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="limit_bump"} 0
+pgcache_cache_writer_command_handle_seconds_count{cmd="limit_bump"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_keepalive_mark",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_keepalive_mark",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_keepalive_mark",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_keepalive_mark"} 5.361333440999999
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_keepalive_mark"} 133
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_begin",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_begin",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_begin",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_begin"} 0.00014347599999999997
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_begin"} 59
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_delete",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_delete",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_delete",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_delete"} 0
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_delete"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_truncate",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_truncate",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_truncate",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_truncate"} 0
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_truncate"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="failed",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="failed",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="failed",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="failed"} 0.13609154899999995
+pgcache_cache_writer_command_handle_seconds_count{cmd="failed"} 207
+pgcache_cache_writer_command_handle_seconds{cmd="ready",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="ready",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="ready",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="ready"} 0.2377510670000005
+pgcache_cache_writer_command_handle_seconds_count{cmd="ready"} 2152
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_insert",quantile="0.5"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_insert",quantile="0.95"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="cdc_insert",quantile="0.99"} 0
+pgcache_cache_writer_command_handle_seconds_sum{cmd="cdc_insert"} 0
+pgcache_cache_writer_command_handle_seconds_count{cmd="cdc_insert"} 0
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build_complete",quantile="0.5"} 0.00006517073515378733
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build_complete",quantile="0.95"} 0.00008194190508458217
+pgcache_cache_writer_command_handle_seconds{cmd="mv_build_complete",quantile="0.99"} 0.00009248167548260069
+pgcache_cache_writer_command_handle_seconds_sum{cmd="mv_build_complete"} 1.4998161929999991
+pgcache_cache_writer_command_handle_seconds_count{cmd="mv_build_complete"} 1041
+
+# TYPE pgcache_cache_mv_build_duration_seconds summary
+pgcache_cache_mv_build_duration_seconds{kind="rebuild",quantile="0.5"} 2.671125711295332
+pgcache_cache_mv_build_duration_seconds{kind="rebuild",quantile="0.95"} 5.223146512721294
+pgcache_cache_mv_build_duration_seconds{kind="rebuild",quantile="0.99"} 5.5873214307972905
+pgcache_cache_mv_build_duration_seconds_sum{kind="rebuild"} 1683.505745232998
+pgcache_cache_mv_build_duration_seconds_count{kind="rebuild"} 368
+pgcache_cache_mv_build_duration_seconds{kind="first_pop",quantile="0.5"} 2.6020510467900317
+pgcache_cache_mv_build_duration_seconds{kind="first_pop",quantile="0.95"} 3.8724988622755956
+pgcache_cache_mv_build_duration_seconds{kind="first_pop",quantile="0.99"} 3.8724988622755956
+pgcache_cache_mv_build_duration_seconds_sum{kind="first_pop"} 3175.4671043279977
+pgcache_cache_mv_build_duration_seconds_count{kind="first_pop"} 673
+
+# TYPE pgcache_cache_merge_wait_seconds summary
+pgcache_cache_merge_wait_seconds{quantile="0.5"} 0
+pgcache_cache_merge_wait_seconds{quantile="0.95"} 0
+pgcache_cache_merge_wait_seconds{quantile="0.99"} 0
+pgcache_cache_merge_wait_seconds_sum 695995.2267255057
+pgcache_cache_merge_wait_seconds_count 770
+
+# TYPE pgcache_cache_handle_update_seconds summary
+pgcache_cache_handle_update_seconds{quantile="0.5"} 0
+pgcache_cache_handle_update_seconds{quantile="0.95"} 0
+pgcache_cache_handle_update_seconds{quantile="0.99"} 0
+pgcache_cache_handle_update_seconds_sum 8.089806912
+pgcache_cache_handle_update_seconds_count 59
+
+# TYPE pgcache_cache_subsumption_latency_seconds summary
+pgcache_cache_subsumption_latency_seconds{quantile="0.5"} 0
+pgcache_cache_subsumption_latency_seconds{quantile="0.95"} 0
+pgcache_cache_subsumption_latency_seconds{quantile="0.99"} 0
+pgcache_cache_subsumption_latency_seconds_sum 0
+pgcache_cache_subsumption_latency_seconds_count 0
+
+# TYPE pgcache_cache_handle_delete_seconds summary
+pgcache_cache_handle_delete_seconds{quantile="0.5"} 0
+pgcache_cache_handle_delete_seconds{quantile="0.95"} 0
+pgcache_cache_handle_delete_seconds{quantile="0.99"} 0
+pgcache_cache_handle_delete_seconds_sum 0
+pgcache_cache_handle_delete_seconds_count 0
+
+# TYPE pgcache_cache_writer_resolve_deparse_seconds summary
+pgcache_cache_writer_resolve_deparse_seconds{quantile="0.5"} 0
+pgcache_cache_writer_resolve_deparse_seconds{quantile="0.95"} 0
+pgcache_cache_writer_resolve_deparse_seconds{quantile="0.99"} 0
+pgcache_cache_writer_resolve_deparse_seconds_sum 0.03404525999999997
+pgcache_cache_writer_resolve_deparse_seconds_count 803
+
+# TYPE pgcache_query_stage_coalesce_wait_seconds summary
+pgcache_query_stage_coalesce_wait_seconds{quantile="0.5"} 0
+pgcache_query_stage_coalesce_wait_seconds{quantile="0.95"} 0
+pgcache_query_stage_coalesce_wait_seconds{quantile="0.99"} 0
+pgcache_query_stage_coalesce_wait_seconds_sum 1947.1681340140024
+pgcache_query_stage_coalesce_wait_seconds_count 5611
+
+# TYPE pgcache_origin_execution_seconds summary
+pgcache_origin_execution_seconds{quantile="0.5"} 0
+pgcache_origin_execution_seconds{quantile="0.95"} 0
+pgcache_origin_execution_seconds{quantile="0.99"} 0
+pgcache_origin_execution_seconds_sum 15311.967420191
+pgcache_origin_execution_seconds_count 8191
+
+# TYPE pgcache_raw_clearance_seconds summary
+pgcache_raw_clearance_seconds{quantile="0.5"} 0
+pgcache_raw_clearance_seconds{quantile="0.95"} 0
+pgcache_raw_clearance_seconds{quantile="0.99"} 0
+pgcache_raw_clearance_seconds_sum 86.79662730600002
+pgcache_raw_clearance_seconds_count 31
+
+# TYPE pgcache_cache_writer_register_populate_dispatch_seconds summary
+pgcache_cache_writer_register_populate_dispatch_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_populate_dispatch_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_populate_dispatch_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_populate_dispatch_seconds_sum 0.013916226
+pgcache_cache_writer_register_populate_dispatch_seconds_count 803
+
+# TYPE pgcache_query_stage_spawn_wait_seconds summary
+pgcache_query_stage_spawn_wait_seconds{quantile="0.5"} 0
+pgcache_query_stage_spawn_wait_seconds{quantile="0.95"} 0
+pgcache_query_stage_spawn_wait_seconds{quantile="0.99"} 0
+pgcache_query_stage_spawn_wait_seconds_sum 0.21736539800000015
+pgcache_query_stage_spawn_wait_seconds_count 8145
+
+# TYPE pgcache_cache_writer_register_insert_seconds summary
+pgcache_cache_writer_register_insert_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_insert_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_insert_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_insert_seconds_sum 0.006590162000000003
+pgcache_cache_writer_register_insert_seconds_count 803
+
+# TYPE pgcache_query_stage_dispatch_seconds summary
+pgcache_query_stage_dispatch_seconds{quantile="0.5"} 0
+pgcache_query_stage_dispatch_seconds{quantile="0.95"} 0
+pgcache_query_stage_dispatch_seconds{quantile="0.99"} 0
+pgcache_query_stage_dispatch_seconds_sum 0.46013372699999827
+pgcache_query_stage_dispatch_seconds_count 16256
+
+# TYPE pgcache_cache_writer_register_subsumption_check_seconds summary
+pgcache_cache_writer_register_subsumption_check_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_subsumption_check_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_subsumption_check_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_subsumption_check_seconds_sum 0.024795399000000027
+pgcache_cache_writer_register_subsumption_check_seconds_count 803
+
+# TYPE pgcache_cache_writer_register_resolve_seconds summary
+pgcache_cache_writer_register_resolve_seconds{quantile="0.5"} 0
+pgcache_cache_writer_register_resolve_seconds{quantile="0.95"} 0
+pgcache_cache_writer_register_resolve_seconds{quantile="0.99"} 0
+pgcache_cache_writer_register_resolve_seconds_sum 0.411743623
+pgcache_cache_writer_register_resolve_seconds_count 803
+
+# TYPE pgcache_query_stage_parse_seconds summary
+pgcache_query_stage_parse_seconds{quantile="0.5"} 0
+pgcache_query_stage_parse_seconds{quantile="0.95"} 0
+pgcache_query_stage_parse_seconds{quantile="0.99"} 0
+pgcache_query_stage_parse_seconds_sum 1.155042824999998
+pgcache_query_stage_parse_seconds_count 16321
+
+# TYPE pgcache_cache_population_worker_idle_seconds summary
+pgcache_cache_population_worker_idle_seconds{worker="0",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="0",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="0",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="0"} 748.6535141250004
+pgcache_cache_population_worker_idle_seconds_count{worker="0"} 83
+pgcache_cache_population_worker_idle_seconds{worker="1",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="1",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="1",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="1"} 577.9423232929998
+pgcache_cache_population_worker_idle_seconds_count{worker="1"} 44
+pgcache_cache_population_worker_idle_seconds{worker="2",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="2",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="2",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="2"} 926.64231596
+pgcache_cache_population_worker_idle_seconds_count{worker="2"} 80
+pgcache_cache_population_worker_idle_seconds{worker="3",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="3",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="3",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="3"} 3242.5102634159994
+pgcache_cache_population_worker_idle_seconds_count{worker="3"} 100
+pgcache_cache_population_worker_idle_seconds{worker="4",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="4",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="4",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="4"} 348.82768474499994
+pgcache_cache_population_worker_idle_seconds_count{worker="4"} 40
+pgcache_cache_population_worker_idle_seconds{worker="5",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="5",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="5",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="5"} 3186.988257686
+pgcache_cache_population_worker_idle_seconds_count{worker="5"} 98
+pgcache_cache_population_worker_idle_seconds{worker="6",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="6",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="6",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="6"} 1065.2673373250004
+pgcache_cache_population_worker_idle_seconds_count{worker="6"} 68
+pgcache_cache_population_worker_idle_seconds{worker="7",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="7",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="7",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="7"} 865.9399958119999
+pgcache_cache_population_worker_idle_seconds_count{worker="7"} 65
+pgcache_cache_population_worker_idle_seconds{worker="8",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="8",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="8",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="8"} 978.1070056219995
+pgcache_cache_population_worker_idle_seconds_count{worker="8"} 79
+pgcache_cache_population_worker_idle_seconds{worker="9",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="9",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="9",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="9"} 3165.3078730810007
+pgcache_cache_population_worker_idle_seconds_count{worker="9"} 102
+pgcache_cache_population_worker_idle_seconds{worker="10",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="10",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="10",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="10"} 970.026031928
+pgcache_cache_population_worker_idle_seconds_count{worker="10"} 60
+pgcache_cache_population_worker_idle_seconds{worker="11",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="11",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="11",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="11"} 529.800153098
+pgcache_cache_population_worker_idle_seconds_count{worker="11"} 38
+pgcache_cache_population_worker_idle_seconds{worker="12",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="12",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="12",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="12"} 1031.1978580080001
+pgcache_cache_population_worker_idle_seconds_count{worker="12"} 70
+pgcache_cache_population_worker_idle_seconds{worker="13",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="13",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="13",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="13"} 513.972043659
+pgcache_cache_population_worker_idle_seconds_count{worker="13"} 38
+pgcache_cache_population_worker_idle_seconds{worker="14",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="14",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="14",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="14"} 62.529254275
+pgcache_cache_population_worker_idle_seconds_count{worker="14"} 27
+pgcache_cache_population_worker_idle_seconds{worker="15",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="15",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="15",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="15"} 1034.1010699400003
+pgcache_cache_population_worker_idle_seconds_count{worker="15"} 87
+pgcache_cache_population_worker_idle_seconds{worker="16",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="16",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="16",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="16"} 1049.1181136009998
+pgcache_cache_population_worker_idle_seconds_count{worker="16"} 84
+pgcache_cache_population_worker_idle_seconds{worker="17",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="17",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="17",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="17"} 900.3226812049999
+pgcache_cache_population_worker_idle_seconds_count{worker="17"} 42
+pgcache_cache_population_worker_idle_seconds{worker="18",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="18",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="18",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="18"} 955.10671356
+pgcache_cache_population_worker_idle_seconds_count{worker="18"} 57
+pgcache_cache_population_worker_idle_seconds{worker="19",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="19",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="19",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="19"} 876.5904045239998
+pgcache_cache_population_worker_idle_seconds_count{worker="19"} 58
+pgcache_cache_population_worker_idle_seconds{worker="20",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="20",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="20",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="20"} 929.4259726089999
+pgcache_cache_population_worker_idle_seconds_count{worker="20"} 62
+pgcache_cache_population_worker_idle_seconds{worker="21",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="21",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="21",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="21"} 1024.8706657500002
+pgcache_cache_population_worker_idle_seconds_count{worker="21"} 79
+pgcache_cache_population_worker_idle_seconds{worker="22",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="22",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="22",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="22"} 765.9987322669996
+pgcache_cache_population_worker_idle_seconds_count{worker="22"} 34
+pgcache_cache_population_worker_idle_seconds{worker="23",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="23",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="23",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="23"} 830.490115404
+pgcache_cache_population_worker_idle_seconds_count{worker="23"} 39
+pgcache_cache_population_worker_idle_seconds{worker="24",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="24",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="24",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="24"} 518.196299461
+pgcache_cache_population_worker_idle_seconds_count{worker="24"} 32
+pgcache_cache_population_worker_idle_seconds{worker="25",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="25",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="25",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="25"} 998.8890675850001
+pgcache_cache_population_worker_idle_seconds_count{worker="25"} 43
+pgcache_cache_population_worker_idle_seconds{worker="26",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="26",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="26",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="26"} 377.93997219700003
+pgcache_cache_population_worker_idle_seconds_count{worker="26"} 27
+pgcache_cache_population_worker_idle_seconds{worker="27",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="27",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="27",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="27"} 920.3308624219999
+pgcache_cache_population_worker_idle_seconds_count{worker="27"} 60
+pgcache_cache_population_worker_idle_seconds{worker="28",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="28",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="28",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="28"} 843.699887317
+pgcache_cache_population_worker_idle_seconds_count{worker="28"} 53
+pgcache_cache_population_worker_idle_seconds{worker="29",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="29",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="29",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="29"} 1046.575295983
+pgcache_cache_population_worker_idle_seconds_count{worker="29"} 66
+pgcache_cache_population_worker_idle_seconds{worker="30",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="30",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="30",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="30"} 3066.7767736149985
+pgcache_cache_population_worker_idle_seconds_count{worker="30"} 87
+pgcache_cache_population_worker_idle_seconds{worker="31",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="31",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="31",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="31"} 432.6027203669999
+pgcache_cache_population_worker_idle_seconds_count{worker="31"} 25
+pgcache_cache_population_worker_idle_seconds{worker="32",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="32",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="32",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="32"} 824.521488869
+pgcache_cache_population_worker_idle_seconds_count{worker="32"} 48
+pgcache_cache_population_worker_idle_seconds{worker="33",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="33",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="33",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="33"} 965.5248609849998
+pgcache_cache_population_worker_idle_seconds_count{worker="33"} 49
+pgcache_cache_population_worker_idle_seconds{worker="34",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="34",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="34",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="34"} 18.997003713999998
+pgcache_cache_population_worker_idle_seconds_count{worker="34"} 9
+pgcache_cache_population_worker_idle_seconds{worker="35",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="35",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="35",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="35"} 21.042476747000002
+pgcache_cache_population_worker_idle_seconds_count{worker="35"} 9
+pgcache_cache_population_worker_idle_seconds{worker="36",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="36",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="36",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="36"} 31.918496451000006
+pgcache_cache_population_worker_idle_seconds_count{worker="36"} 13
+pgcache_cache_population_worker_idle_seconds{worker="37",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="37",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="37",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="37"} 26.704388225999992
+pgcache_cache_population_worker_idle_seconds_count{worker="37"} 10
+pgcache_cache_population_worker_idle_seconds{worker="38",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="38",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="38",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="38"} 0.17442344899999998
+pgcache_cache_population_worker_idle_seconds_count{worker="38"} 6
+pgcache_cache_population_worker_idle_seconds{worker="39",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="39",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="39",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="39"} 0.10768716599999999
+pgcache_cache_population_worker_idle_seconds_count{worker="39"} 8
+pgcache_cache_population_worker_idle_seconds{worker="40",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="40",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="40",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="40"} 0.18738618699999998
+pgcache_cache_population_worker_idle_seconds_count{worker="40"} 4
+pgcache_cache_population_worker_idle_seconds{worker="41",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="41",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="41",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="41"} 0.12035527900000001
+pgcache_cache_population_worker_idle_seconds_count{worker="41"} 4
+pgcache_cache_population_worker_idle_seconds{worker="42",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="42",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="42",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="42"} 0.21309587400000002
+pgcache_cache_population_worker_idle_seconds_count{worker="42"} 6
+pgcache_cache_population_worker_idle_seconds{worker="43",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="43",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="43",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="43"} 0.17323182799999998
+pgcache_cache_population_worker_idle_seconds_count{worker="43"} 6
+pgcache_cache_population_worker_idle_seconds{worker="44",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="44",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="44",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="44"} 66.974923198
+pgcache_cache_population_worker_idle_seconds_count{worker="44"} 5
+pgcache_cache_population_worker_idle_seconds{worker="45",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="45",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="45",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="45"} 0.09083112
+pgcache_cache_population_worker_idle_seconds_count{worker="45"} 4
+pgcache_cache_population_worker_idle_seconds{worker="46",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="46",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="46",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="46"} 0.042114281
+pgcache_cache_population_worker_idle_seconds_count{worker="46"} 3
+pgcache_cache_population_worker_idle_seconds{worker="47",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="47",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="47",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="47"} 0.18048734900000002
+pgcache_cache_population_worker_idle_seconds_count{worker="47"} 4
+pgcache_cache_population_worker_idle_seconds{worker="48",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="48",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="48",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="48"} 0.090557643
+pgcache_cache_population_worker_idle_seconds_count{worker="48"} 3
+pgcache_cache_population_worker_idle_seconds{worker="49",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="49",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="49",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="49"} 0.08480202299999999
+pgcache_cache_population_worker_idle_seconds_count{worker="49"} 4
+pgcache_cache_population_worker_idle_seconds{worker="50",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="50",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="50",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="50"} 0.014594458
+pgcache_cache_population_worker_idle_seconds_count{worker="50"} 2
+pgcache_cache_population_worker_idle_seconds{worker="51",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="51",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="51",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="51"} 0.11032825300000002
+pgcache_cache_population_worker_idle_seconds_count{worker="51"} 4
+pgcache_cache_population_worker_idle_seconds{worker="52",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="52",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="52",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="52"} 60.511975408
+pgcache_cache_population_worker_idle_seconds_count{worker="52"} 3
+pgcache_cache_population_worker_idle_seconds{worker="53",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="53",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="53",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="53"} 0.06776273799999999
+pgcache_cache_population_worker_idle_seconds_count{worker="53"} 2
+pgcache_cache_population_worker_idle_seconds{worker="54",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="54",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="54",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="54"} 0.071625358
+pgcache_cache_population_worker_idle_seconds_count{worker="54"} 3
+pgcache_cache_population_worker_idle_seconds{worker="55",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="55",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="55",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="55"} 0.116036972
+pgcache_cache_population_worker_idle_seconds_count{worker="55"} 2
+pgcache_cache_population_worker_idle_seconds{worker="56",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="56",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="56",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="56"} 0.16098062800000001
+pgcache_cache_population_worker_idle_seconds_count{worker="56"} 3
+pgcache_cache_population_worker_idle_seconds{worker="57",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="57",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="57",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="57"} 0.062377148
+pgcache_cache_population_worker_idle_seconds_count{worker="57"} 3
+pgcache_cache_population_worker_idle_seconds{worker="58",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="58",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="58",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="58"} 0.03345054
+pgcache_cache_population_worker_idle_seconds_count{worker="58"} 1
+pgcache_cache_population_worker_idle_seconds{worker="59",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="59",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="59",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="59"} 0.000017079
+pgcache_cache_population_worker_idle_seconds_count{worker="59"} 1
+pgcache_cache_population_worker_idle_seconds{worker="60",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="60",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="60",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="60"} 0.055129779
+pgcache_cache_population_worker_idle_seconds_count{worker="60"} 1
+pgcache_cache_population_worker_idle_seconds{worker="61",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="61",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="61",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="61"} 0.103311132
+pgcache_cache_population_worker_idle_seconds_count{worker="61"} 4
+pgcache_cache_population_worker_idle_seconds{worker="62",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="62",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="62",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="62"} 0.11372746
+pgcache_cache_population_worker_idle_seconds_count{worker="62"} 1
+pgcache_cache_population_worker_idle_seconds{worker="63",quantile="0.5"} 0
+pgcache_cache_population_worker_idle_seconds{worker="63",quantile="0.95"} 0
+pgcache_cache_population_worker_idle_seconds{worker="63",quantile="0.99"} 0
+pgcache_cache_population_worker_idle_seconds_sum{worker="63"} 0
+pgcache_cache_population_worker_idle_seconds_count{worker="63"} 0
+
+
+=== ORIGIN POSTGRES STATS (pg_stat_database & pg_statio_user_tables) ===
+ datname | xact_commit | blks_read |  blks_hit  | buffer_hit_pct | tup_returned | tup_fetched | tup_inserted | tup_updated 
+---------+-------------+-----------+------------+----------------+--------------+-------------+--------------+-------------
+ bench   |      114439 | 504595208 | 6529104995 |          92.83 |   2870037361 |  2571498912 |     54501055 |         521
+(1 row)
+
+  relname   | heap_blks_read | heap_blks_hit | idx_blks_read | idx_blks_hit 
+------------+----------------+---------------+---------------+--------------
+ order_item |      310152111 |     675983211 |      72506565 |    616568690
+ orders     |       80523116 |     277145402 |      11146781 |    180238919
+ customer   |       12531227 |      55703799 |         74188 |     36782495
+ review     |        7235919 |     401948050 |       3412929 |    801841609
+ product    |        5145167 |     645653350 |       1611741 |   1693738687
+ seller     |           4051 |     275422780 |          6176 |    545800690
+ category   |            101 |     156579706 |          3086 |    154814983
+(7 rows)
+

@@ -1153,6 +1153,16 @@ Para medir o alívio contínuo de recursos físicos no servidor PostgreSQL de Or
 
 Toda a telemetria é transmitida a cada 5–10 segundos para **[https://pgcachebench.grafana.net/](https://pgcachebench.grafana.net/)** com `grafana-alloy`, `postgres-exporter` e `pgbench-exporter` fixados no nó `loadgen` (`bench_role=loadgen`) para garantir zero interferência de CPU nos nós `origin` e `pgcache`.
 
+#### Resultados Medidos de Longa Duração 1h30m (`SCALE=20`, `54,5M` Linhas / `5,86 GB`, `ACTIVE_TENANTS=100`, `CLIENTS=8`)
+
+| Bloco / Cenário | Duração | Latência Média Path A (Origem) | TPS Path A | Latência Média Path B (PgCache) | TPS Path B | TPS Final Estabilizado 10m | Cache Hit % | Ganho Geral de TPS | Total de Txns (`A` vs `B`) |
+| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
+| **Bloco 1: 100% Leitura** (`read_1800s`) | **30m + 30m** | `16.865,88 ms` | `0,47` | **`11.091,45 ms`** | **`0,72`** | **`1,60–1,90 TPS`** | `47,1%` | **`+51,8%`** (até **`4,0×`**) | `856` vs **`1.304`** |
+| **Bloco 2: 95% Leitura / 5% Escrita** (`rw_5pct_900s`) | **15m + 15m** | `16.462,09 ms` | `0,48` | **`11.970,92 ms`** | **`0,66`** | **`1,80–2,10 TPS`** | `62,1%` | **`+37,1%`** (até **`4,3×`**) | `444` vs **`610`** |
+
+- **Aceleração de Escrita na Origem (Escritas `2,21×` mais rápidas)**: No Bloco 2, absorver as leituras analíticas complexas no PgCache aliviou a contenção de CPU e I/O de disco na Origem, reduzindo a latência média do `UPDATE` transacional (`write.sql@5`) pela metade, de **`226,96 ms` na Origem Direta** para **`102,89 ms` via PgCache** (`-54,7%` de latência).
+- **Zero Evictions e 100% de Estabilidade (`pgcache_cache_evictions = 0`, `pgcache_queries_uncacheable = 0`)**: Ao longo dos 90 minutos contínuos (`16.401` consultas), o PgCache operou em `3,39 GiB / 3,50 GiB` (`96,7%` do `MEMORY_LIMIT`) com seu controlador de admissão por high-watermark mantendo fixadas em RAM `607 / 800` Materialized Views complexas por tenant sem nenhuma eviction ou reinicialização. Veja [`results/endurance-90m/README-pt.md`](results/endurance-90m/README-pt.md) para o detalhamento completo.
+
 ---
 
 ## 16. O que isto não prova

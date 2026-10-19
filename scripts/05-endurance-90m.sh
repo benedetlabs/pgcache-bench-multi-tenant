@@ -152,7 +152,7 @@ run_streamed() {
     BEGIN { l="0.000"; t=0 }
     /^latency average/ { if($4!="" && $4!="NaN") l=$4 }
     /^tps/             { if($3!="" && $3!="NaN") t=$3 }
-    END { printf "%s %.0f\n", l, t }
+    END { if (t+0 > 0 && t+0 < 10) printf "%s %.2f\n", l, t; else printf "%s %.0f\n", l, t }
   ' "$tmp_out")"
   rm -f "$tmp_out"
 
