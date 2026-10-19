@@ -32,6 +32,7 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 14. [Varredura 3 — escrita](#14-varredura-3--escrita)
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
    - [15.1 Varredura 4 — cenários complexos de SaaS multi-tenant (PgCache 0.7.1)](#151-varredura-4--cenários-complexos-de-saas-multi-tenant-pgcache-071)
+   - [15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)](#152-varredura-5--longa-duração-1h30m-e-alívio-de-recursos-na-origem-doks--grafana-cloud)
 16. [O que isto não prova](#16-o-que-isto-não-prova)
 17. [Apêndice: todos os arquivos](#17-apêndice-todos-os-arquivos)
 
@@ -1132,6 +1133,26 @@ suítes de carga complexa avaliadas no **PgCache `0.7.1`** tanto em **DigitalOce
    - **Escala do Working Set no Cold-Start**: No DOKS de 3 nós, o PgCache aquece **100,0% do working set de 1 a 500 tenants (`4.000` consultas complexas)** (`+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants). Em 1.000 tenants (`8.000` consultas complexas), a amostragem uniforme combinada ao custo de população fria por tenant aquece `68,1%` no DOKS (`62,7%` no Docker) dentro da janela limitada de 8 passes (15s).
    - **CDC In-Place em `INNER JOIN` vs. Invalidação Conservadora em `LEFT JOIN` sob Escrita**: Quando `UPDATE orders` roda em proporções de 5%–10% de escritas, as **5 consultas `INNER JOIN` (`62,5%`)** em `complex-dashboard.sql` (que possuem predicados explícitos `WHERE ... AND o.tenant_id = :t`) aplicam atualizações in-place via CDC (`cdc_update`) e rebuilds de MV em background (`pgcache_cache_mv_rebuilds`), permanecendo **100% cache hits**. Já as **3 consultas `LEFT JOIN` (`37,5%`)** (onde `o.tenant_id = :t` reside na cláusula `ON` do outer join para preservar clientes sem pedidos) sofrem invalidação conservadora em escritas na tabela `orders`, estabilizando o hit ratio geral em **63,1%–75,0% no DOKS** (`62,5%–67,6%` no Docker). Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
 
+### 15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)
+
+**Driver: [`scripts/05-endurance-90m.sh`](scripts/05-endurance-90m.sh)** ·
+**Stack de Telemetria: [`scripts/deploy-monitoring.sh`](scripts/deploy-monitoring.sh)** ·
+**Dashboard Grafana Cloud: [`https://pgcachebench.grafana.net/`](https://pgcachebench.grafana.net/)** ([`infra/grafana/pgcache-endurance-dashboard.json`](infra/grafana/pgcache-endurance-dashboard.json)) ·
+**Runbook e Metodologia: [`results/endurance-90m/README-pt.md`](results/endurance-90m/README-pt.md)**
+
+Para medir o alívio contínuo de recursos físicos no servidor PostgreSQL de Origem (uso de CPU por modo, memória RAM em uso, IOPS e MB/s de leitura/escrita em disco `do-block-storage`, conexões ativas, tuplas varridas e lag de replicação lógica WAL) em um horizonte sustentado de 90 minutos, a Varredura 5 escala o banco de dados para **`SCALE=20` (~10 GB: 10M pedidos, 40M itens, 2M clientes em 1.000 tenants — 20× maior que o `shared_buffers=512MB` da Origem)** e executa seis fases consecutivas:
+
+| ID da Fase | Duração | Bloco e Alvo | Mix de Carga | Objetivo de Telemetria |
+| :---: | :---: | :--- | :--- | :--- |
+| **Fase 1** | **30 min** (`1800s`) | **Bloco 1 — Origem Direto (`Path A`)** | `100% Leitura` (`complex-dashboard.sql`) | Baseline de saturação de CPU da Origem, IOPS/MBs de leitura de disco, conexões ativas e varreduras |
+| **Fase 2** | *Dinâmico* (`warm_until_settled`) | **Bloco 1 — Warm-up PgCache** | `100% Leitura` (`complex-dashboard.sql`) | População das tabelas-base e construção das Materialized Views até o hit ratio estabilizar (`< 1%`) |
+| **Fase 3** | **30 min** (`1800s`) | **Bloco 1 — PgCache Proxy (`Path B`)** | `100% Leitura` (`complex-dashboard.sql`) | **Alívio na Origem**: CPU, leitura de disco e conexões ativas na Origem caem a quase zero enquanto o TPS sobe |
+| **Fase 4** | **15 min** (`900s`) | **Bloco 2 — Origem Direto (`Path A`)** | `95% Leitura` + `5% Escrita` (`write.sql`) | Origem sob leituras analíticas combinadas com `UPDATE`s transacionais e flush de WAL |
+| **Fase 5** | *Dinâmico* (`warm_until_settled`) | **Bloco 2 — Warm-up CDC PgCache** | `95% Leitura` + `5% Escrita` (`write.sql`) | Estabiliza o ciclo de invalidação por replicação lógica (CDC) sob escrita ativa |
+| **Fase 6** | **15 min** (`900s`) | **Bloco 2 — PgCache Proxy (`Path B`)** | `95% Leitura` + `5% Escrita` (`write.sql`) | Origem processa apenas os 5% de escrita e o stream CDC enquanto o PgCache responde às leituras |
+
+Toda a telemetria é transmitida a cada 5–10 segundos para **[https://pgcachebench.grafana.net/](https://pgcachebench.grafana.net/)** com `grafana-alloy`, `postgres-exporter` e `pgbench-exporter` fixados no nó `loadgen` (`bench_role=loadgen`) para garantir zero interferência de CPU nos nós `origin` e `pgcache`.
+
 ---
 
 ## 16. O que isto não prova
@@ -1173,8 +1194,9 @@ sinal de que quatro amostras não são medição.
 ### Um só tamanho de dados, e ele cabe na memória
 
 463 MB contra 1 GB de `shared_buffers`. Como a seção 7.2 explicou, esse é o caso
-mais difícil para o cache e o resultado é conservador nesse eixo — mas nada aqui
-diz o que acontece quando o conjunto de dados excede a memória da origem.
+mais difícil para o cache e o resultado é conservador nesse eixo — e a Seção 15.2
+(`scripts/05-endurance-90m.sh`) estende essa avaliação para um banco de **~10 GB (`SCALE=20`)**
+contra `512 MB` de `shared_buffers` em uma campanha de longa duração de 1h30m.
 
 ### Duzentos tenants não são vinte mil
 
@@ -1203,12 +1225,17 @@ pgcache-multi-tenant/
 ├── README.md                        versão em inglês
 ├── README-pt.md                     este documento
 ├── AGENTS.md                        diretrizes do repositório e time de 3 skills
+├── .env.grafana.example             template de credenciais remote_write do Grafana Cloud
 ├── .agents/
 │   └── skills/
 │       ├── pgcache-benchmark/       Skill Coordenador de Benchmark
 │       ├── pgcache-complex-scenarios/ Skill de SQL complexo e gate de correção
 │       └── pgcache-metrics-analyst/ Skill de Telemetria e Lei de Amdahl
 ├── infra/
+│   ├── grafana/
+│   │   └── pgcache-endurance-dashboard.json Dashboard pronto para importar no Grafana Cloud
+│   ├── monitoring/
+│   │   └── grafana-cloud-monitoring.yaml    node-exporter, postgres-exporter, pgbench-exporter e Alloy
 │   ├── terraform/
 │   │   └── aks/                     Terraform de ultra-baixo custo Azure AKS + 3 nós Spot
 │   ├── k8s/
@@ -1237,6 +1264,8 @@ pgcache-multi-tenant/
 │   ├── 02-concurrency-sweep.sh
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          varreduras de cenários complexos, tenants, clientes e escrita
+│   ├── 05-endurance-90m.sh          campanha de 1h30m de longa duração e alívio de recursos (30+30m leitura, 15+15m R/W)
+│   ├── deploy-monitoring.sh         deploy da stack de telemetria Grafana Cloud no Kubernetes
 │   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
 │   ├── aks-cluster.sh               script automatizado de cluster Azure AKS Spot via Terraform
 │   ├── do-cluster.sh                script automatizado de cluster DigitalOcean DOKS
@@ -1250,6 +1279,7 @@ pgcache-multi-tenant/
     ├── 0.6.4/                       resultados para PgCache 0.6.4
     ├── 0.7.0/                       resultados para PgCache 0.7.0
     ├── 0.7.1/                       resultados e cenários complexos para PgCache 0.7.1
+    ├── endurance-90m/               runbook de longa duração (1h30m) e alívio de recursos na Origem
     └── tuned/                       resultados do perfil otimizado de rede e engine
 ```
 

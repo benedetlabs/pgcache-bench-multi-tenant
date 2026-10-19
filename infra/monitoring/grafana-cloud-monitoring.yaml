@@ -1,0 +1,610 @@
+# ============================================================================
+# Kubernetes Telemetry Stack for PgCache vs Origin Endurance Benchmark
+#
+# Deploys:
+#   1. node-exporter (DaemonSet on all 3 nodes: origin, pgcache, loadgen)
+#   2. postgres-exporter (Deployment pinned to loadgen node -> 0% CPU on origin)
+#   3. pgbench-exporter (Deployment pinned to loadgen node -> live 5s TPS/latency)
+#   4. grafana-alloy (Deployment pinned to loadgen node -> remote_write to Grafana Cloud)
+#
+# Applied via: ./scripts/deploy-monitoring.sh
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+# ── 1. Node Exporter (DaemonSet across Origin, PgCache, and Loadgen nodes) ──
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+  labels:
+    app: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.8.2
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --web.listen-address=:9100
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+          ports:
+            - containerPort: 9100
+              name: metrics
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              mountPropagation: HostToContainer
+              readOnly: true
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+---
+# ── 2. Custom Queries & Deployment for Origin PostgreSQL Exporter ───────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-exporter-queries
+  namespace: monitoring
+data:
+  queries.yaml: |
+    pg_replication_slot_lag:
+      query: |
+        SELECT
+          slot_name,
+          slot_type,
+          active::int AS is_active,
+          COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn), 0)::float8 AS flush_lag_bytes,
+          COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn), 0)::float8 AS restart_lag_bytes
+        FROM pg_replication_slots
+      metrics:
+        - slot_name:
+            usage: "LABEL"
+            description: "Name of the replication slot"
+        - slot_type:
+            usage: "LABEL"
+            description: "Type of the replication slot"
+        - is_active:
+            usage: "GAUGE"
+            description: "Whether the replication slot is currently active (1=active, 0=inactive)"
+        - flush_lag_bytes:
+            usage: "GAUGE"
+            description: "WAL bytes lag between current LSN and confirmed_flush_lsn"
+        - restart_lag_bytes:
+            usage: "GAUGE"
+            description: "WAL bytes retained from restart_lsn"
+
+    pg_user_tables_io:
+      query: |
+        SELECT
+          relname AS table_name,
+          COALESCE(seq_scan, 0)::float8 AS seq_scan,
+          COALESCE(seq_tup_read, 0)::float8 AS seq_tup_read,
+          COALESCE(idx_scan, 0)::float8 AS idx_scan,
+          COALESCE(idx_tup_fetch, 0)::float8 AS idx_tup_fetch,
+          COALESCE(n_tup_ins, 0)::float8 AS tup_inserted,
+          COALESCE(n_tup_upd, 0)::float8 AS tup_updated,
+          COALESCE(n_tup_del, 0)::float8 AS tup_deleted,
+          COALESCE(n_live_tup, 0)::float8 AS live_tuples,
+          COALESCE(n_dead_tup, 0)::float8 AS dead_tuples,
+          pg_total_relation_size(relid)::float8 AS total_size_bytes
+        FROM pg_stat_user_tables
+        WHERE relname NOT LIKE 'pgbench%'
+      metrics:
+        - table_name:
+            usage: "LABEL"
+            description: "Table name"
+        - seq_scan:
+            usage: "COUNTER"
+            description: "Sequential scans initiated on this table"
+        - seq_tup_read:
+            usage: "COUNTER"
+            description: "Live rows fetched by sequential scans"
+        - idx_scan:
+            usage: "COUNTER"
+            description: "Index scans initiated on this table"
+        - idx_tup_fetch:
+            usage: "COUNTER"
+            description: "Live rows fetched by index scans"
+        - tup_inserted:
+            usage: "COUNTER"
+            description: "Rows inserted"
+        - tup_updated:
+            usage: "COUNTER"
+            description: "Rows updated"
+        - tup_deleted:
+            usage: "COUNTER"
+            description: "Rows deleted"
+        - live_tuples:
+            usage: "GAUGE"
+            description: "Estimated number of live rows"
+        - dead_tuples:
+            usage: "GAUGE"
+            description: "Estimated number of dead rows"
+        - total_size_bytes:
+            usage: "GAUGE"
+            description: "Total disk footprint of table + indexes in bytes"
+
+    pg_activity_states:
+      query: |
+        SELECT
+          COALESCE(state, 'background') AS backend_state,
+          COUNT(*)::float8 AS connections
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+        GROUP BY COALESCE(state, 'background')
+      metrics:
+        - backend_state:
+            usage: "LABEL"
+            description: "Backend connection state"
+        - connections:
+            usage: "GAUGE"
+            description: "Number of connections in this state"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+  labels:
+    app: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+    spec:
+      # Pin to loadgen node so exporter uses 0% CPU on the origin node
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: bench_role
+                    operator: In
+                    values: ["loadgen"]
+      containers:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          args:
+            - --extend.query-path=/etc/postgres-exporter/queries.yaml
+            - --collector.stat_bgwriter
+            - --collector.stat_database
+            - --collector.stat_statements
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://bench:benchpass@origin.pgcache-mt.svc.cluster.local:5432/bench?sslmode=disable"
+          ports:
+            - containerPort: 9187
+              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - name: queries
+              mountPath: /etc/postgres-exporter
+      volumes:
+        - name: queries
+          configMap:
+            name: postgres-exporter-queries
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+spec:
+  selector:
+    app: postgres-exporter
+  ports:
+    - port: 9187
+      targetPort: 9187
+      name: metrics
+---
+# ── 3. Live pgbench Telemetry Exporter (:9105/metrics) ──────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbench-exporter
+  namespace: monitoring
+  labels:
+    app: pgbench-exporter
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pgbench-exporter
+  template:
+    metadata:
+      labels:
+        app: pgbench-exporter
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: bench_role
+                    operator: In
+                    values: ["loadgen"]
+      containers:
+        - name: httpd
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              mkdir -p /www
+              cat <<'PROM' > /www/metrics
+              # HELP pgbench_live_tps Current live transactions per second from pgbench -P 5
+              # TYPE pgbench_live_tps gauge
+              pgbench_live_tps 0
+              # HELP pgbench_live_latency_ms Current live average transaction latency in milliseconds
+              # TYPE pgbench_live_latency_ms gauge
+              pgbench_live_latency_ms 0
+              # HELP pgbench_live_latency_stddev_ms Current live latency standard deviation in milliseconds
+              # TYPE pgbench_live_latency_stddev_ms gauge
+              pgbench_live_latency_stddev_ms 0
+              # HELP pgbench_phase_id Current benchmark phase (0=idle, 1=read_origin_30m, 2=read_warmup, 3=read_pgcache_30m, 4=rw_origin_15m, 5=rw_warmup, 6=rw_pgcache_15m)
+              # TYPE pgbench_phase_id gauge
+              pgbench_phase_id 0
+              # HELP pgbench_target_is_pgcache Target under test (0=Origin PostgreSQL, 1=PgCache Proxy)
+              # TYPE pgbench_target_is_pgcache gauge
+              pgbench_target_is_pgcache 0
+              # HELP pgbench_write_ratio_pct Percentage of write transactions in current workload
+              # TYPE pgbench_write_ratio_pct gauge
+              pgbench_write_ratio_pct 0
+              # HELP pgbench_active_clients Number of concurrent pgbench clients
+              # TYPE pgbench_active_clients gauge
+              pgbench_active_clients 0
+              # HELP pgbench_active_tenants Number of active tenants in the workload
+              # TYPE pgbench_active_tenants gauge
+              pgbench_active_tenants 0
+              PROM
+              exec httpd -f -p 9105 -h /www
+          ports:
+            - containerPort: 9105
+              name: metrics
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbench-exporter
+  namespace: monitoring
+spec:
+  selector:
+    app: pgbench-exporter
+  ports:
+    - port: 9105
+      targetPort: 9105
+      name: metrics
+---
+# ── 4. RBAC & Grafana Alloy Collector (Pinned to Loadgen Node) ──────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-alloy
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: grafana-alloy
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods", "pods/log", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor", "/metrics/resource"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: grafana-alloy
+subjects:
+  - kind: ServiceAccount
+    name: grafana-alloy
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    // ── Remote Configuration (Grafana Cloud Fleet Management) ───────────────
+    remotecfg {
+      url            = sys.env("GCLOUD_FM_URL")
+      id             = sys.env("CLUSTER_NAME") + "-alloy"
+      poll_frequency = "60s"
+      basic_auth {
+        username = sys.env("GCLOUD_FM_USER")
+        password = sys.env("GCLOUD_RW_API_KEY")
+      }
+      attributes = {
+        "cluster"   = sys.env("CLUSTER_NAME"),
+        "namespace" = "monitoring",
+        "platform"  = "kubernetes",
+      }
+    }
+
+    // ── Remote Write Destination: Grafana Cloud Prometheus ──────────────────
+    prometheus.remote_write "grafana_cloud" {
+      endpoint {
+        url = sys.env("GCLOUD_PROM_URL")
+        basic_auth {
+          username = sys.env("GCLOUD_PROM_USER")
+          password = sys.env("GCLOUD_RW_API_KEY")
+        }
+        queue_config {
+          capacity            = 10000
+          batch_send_deadline = "5s"
+          max_shards          = 10
+        }
+      }
+      external_labels = {
+        cluster = sys.env("CLUSTER_NAME"),
+      }
+    }
+
+    // ── 1. Discover Kubernetes Nodes (for Node Exporter & cAdvisor) ─────────
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    // Node Exporter on port 9100 of each node (hostNetwork)
+    discovery.relabel "node_exporter" {
+      targets = discovery.kubernetes.nodes.targets
+
+      rule {
+        source_labels = ["__address__"]
+        regex         = "([^:]+)(?::\\d+)?"
+        replacement   = "$1:9100"
+        target_label  = "__address__"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "node"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_node_label_bench_role"]
+        regex         = "(.+)"
+        target_label  = "bench_role"
+      }
+      rule {
+        target_label = "job"
+        replacement  = "node-exporter"
+      }
+    }
+
+    prometheus.scrape "node_exporter" {
+      targets         = discovery.relabel.node_exporter.output
+      scrape_interval = "10s"
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+
+    // Kubelet cAdvisor for container CPU/Memory/FS metrics
+    discovery.relabel "cadvisor" {
+      targets = discovery.kubernetes.nodes.targets
+
+      rule {
+        target_label = "__scheme__"
+        replacement  = "https"
+      }
+      rule {
+        target_label = "__metrics_path__"
+        replacement  = "/metrics/cadvisor"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "node"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_node_label_bench_role"]
+        regex         = "(.+)"
+        target_label  = "bench_role"
+      }
+      rule {
+        target_label = "job"
+        replacement  = "kubelet-cadvisor"
+      }
+    }
+
+    prometheus.scrape "cadvisor" {
+      targets           = discovery.relabel.cadvisor.output
+      scrape_interval   = "10s"
+      bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      tls_config {
+        ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        insecure_skip_verify = true
+      }
+      forward_to = [prometheus.relabel.cadvisor_filter.receiver]
+    }
+
+    prometheus.relabel "cadvisor_filter" {
+      rule {
+        source_labels = ["namespace"]
+        regex         = "pgcache-mt"
+        action        = "keep"
+      }
+      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+
+    // ── 2. Scrape PgCache Native Prometheus Endpoint (:9091/metrics) ────────
+    discovery.kubernetes "pgcache_pods" {
+      role = "pod"
+      namespaces {
+        names = ["pgcache-mt"]
+      }
+    }
+
+    discovery.relabel "pgcache_metrics" {
+      targets = discovery.kubernetes.pgcache_pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        regex         = "pgcache"
+        action        = "keep"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_port_name"]
+        regex         = "metrics"
+        action        = "keep"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "node"
+      }
+      rule {
+        target_label = "bench_role"
+        replacement  = "pgcache"
+      }
+      rule {
+        target_label = "job"
+        replacement  = "pgcache"
+      }
+    }
+
+    prometheus.scrape "pgcache_metrics" {
+      targets         = discovery.relabel.pgcache_metrics.output
+      scrape_interval = "5s"
+      scrape_timeout  = "4s"
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+
+    // ── 3. Scrape Origin PostgreSQL Exporter (:9187/metrics) ────────────────
+    prometheus.scrape "postgres_origin" {
+      targets = [{
+        "__address__" = "postgres-exporter.monitoring.svc.cluster.local:9187",
+        "bench_role"  = "origin",
+        "job"         = "postgres-origin",
+      }]
+      scrape_interval = "10s"
+      scrape_timeout  = "8s"
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+
+    // ── 4. Scrape Live pgbench Telemetry (:9105/metrics) ────────────────────
+    prometheus.scrape "pgbench_live" {
+      targets = [{
+        "__address__" = "pgbench-exporter.monitoring.svc.cluster.local:9105",
+        "bench_role"  = "loadgen",
+        "job"         = "pgbench",
+      }]
+      scrape_interval = "5s"
+      scrape_timeout  = "4s"
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-alloy
+  namespace: monitoring
+  labels:
+    app: grafana-alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-alloy
+  template:
+    metadata:
+      labels:
+        app: grafana-alloy
+    spec:
+      serviceAccountName: grafana-alloy
+      # Pin to loadgen node to preserve 100% CPU isolation on origin and pgcache
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: bench_role
+                    operator: In
+                    values: ["loadgen"]
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.4.2
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/var/lib/alloy/data
+            - --server.http.listen-addr=0.0.0.0:12345
+            - --stability.level=experimental
+          envFrom:
+            - secretRef:
+                name: grafana-cloud-credentials
+          ports:
+            - containerPort: 12345
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+            - name: data
+              mountPath: /var/lib/alloy/data
+      volumes:
+        - name: config
+          configMap:
+            name: grafana-alloy-config
+        - name: data
+          emptyDir: {}

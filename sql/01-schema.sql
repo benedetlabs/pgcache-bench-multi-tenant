@@ -61,7 +61,8 @@ CREATE TABLE orders (
   customer_id int NOT NULL REFERENCES customer(id),
   status      text NOT NULL,
   total       numeric(10,2) NOT NULL,
-  created_at  timestamptz NOT NULL
+  created_at  timestamptz NOT NULL,
+  tenant_id   int NOT NULL
 );
 
 CREATE TABLE order_item (
@@ -69,7 +70,8 @@ CREATE TABLE order_item (
   order_id   int NOT NULL REFERENCES orders(id),
   product_id int NOT NULL REFERENCES product(id),
   qty        int NOT NULL,
-  price      numeric(10,2) NOT NULL
+  price      numeric(10,2) NOT NULL,
+  tenant_id  int NOT NULL
 );
 
 CREATE TABLE review (
@@ -95,24 +97,26 @@ INSERT INTO customer SELECT g, 'cust' || g, 'c' || g || '@lab.local', 1 + (g % :
 INSERT INTO product  SELECT g, 1 + (g % 50), 1 + (g % 500), 'product ' || g,
                             (10 + random() * 490)::numeric(10,2),
                             (random() * 1000)::int, true
-                     FROM generate_series(1, 200000 * :scale) g;
+                     FROM generate_series(1, LEAST(200000 * :scale, 1000000)) g;
 
 -- 500,000 * :scale orders over (100,000 * :scale) customers
 INSERT INTO orders   SELECT g, 1 + (g % (100000 * :scale)),
                             (ARRAY['new','paid','shipped','done'])[1 + (g % 4)],
                             (20 + random() * 2000)::numeric(10,2),
-                            now() - (g % 365 || ' days')::interval
+                            now() - (g % 365 || ' days')::interval,
+                            1 + ((1 + (g % (100000 * :scale))) % :tenants)
                      FROM generate_series(1, 500000 * :scale) g;
 
 -- 2,000,000 * :scale line items over (500,000 * :scale) orders
-INSERT INTO order_item SELECT g, 1 + (g % (500000 * :scale)), 1 + (g * 7 % (200000 * :scale)),
-                              1 + (g % 5), (10 + random() * 490)::numeric(10,2)
+INSERT INTO order_item SELECT g, 1 + (g % (500000 * :scale)), 1 + (g * 7 % LEAST(200000 * :scale, 1000000)),
+                              1 + (g % 5), (10 + random() * 490)::numeric(10,2),
+                              1 + ((1 + ((1 + (g % (500000 * :scale))) % (100000 * :scale))) % :tenants)
                        FROM generate_series(1, 2000000 * :scale) g;
 
-INSERT INTO review   SELECT g, 1 + (g % (200000 * :scale)), 1 + (g % (100000 * :scale)), 1 + (g % 5),
+INSERT INTO review   SELECT g, 1 + (g % LEAST(200000 * :scale, 1000000)), 1 + (g % (100000 * :scale)), 1 + (g % 5),
                             'review body text number ' || g,
                             now() - (g % 365 || ' days')::interval
-                     FROM generate_series(1, 300000 * :scale) g;
+                     FROM generate_series(1, LEAST(300000 * :scale, 1500000)) g;
 
 -- ── Indexes ─────────────────────────────────────────────────────────────────
 

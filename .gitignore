@@ -19,3 +19,6 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# Local Grafana Cloud credentials (never commit API keys)
+.env
+.env.grafana

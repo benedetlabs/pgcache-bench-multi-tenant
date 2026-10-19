@@ -32,6 +32,7 @@ the rest is the reasoning, including the parts we got wrong.
 14. [Sweep 3 — writes](#14-sweep-3--writes)
 15. [Why the query shape decides everything](#15-why-the-query-shape-decides-everything)
    - [15.1 Sweep 4 — complex multi-tenant SaaS scenarios (PgCache 0.7.1)](#151-sweep-4--complex-multi-tenant-saas-scenarios-pgcache-071)
+   - [15.2 Sweep 5 — 1h30m endurance & Origin resource offload (DOKS + Grafana Cloud)](#152-sweep-5--1h30m-endurance--origin-resource-offload-doks--grafana-cloud)
 16. [What this does not prove](#16-what-this-does-not-prove)
 17. [Appendix: every file](#17-appendix-every-file)
 
@@ -1117,6 +1118,26 @@ complex workload suites evaluated on **PgCache `0.7.1`** across both **3-Node Di
    - **Cold-Start Working-Set Scaling**: On 3-node DOKS, PgCache warms **100.0% of the working set from 1 to 500 tenants (`4,000` complex queries)** (`+2,133%` at 1 tenant, `+1,774%` at 200 tenants, and `+1,108%` at 500 tenants). At 1,000 tenants (`8,000` complex queries), uniform random sampling across 1,000 tenants combined with per-tenant cold population cost warms `68.1%` on DOKS (`62.7%` on Docker) within the bounded 8-pass (15s) warm-up window.
    - **`INNER JOIN` In-Place CDC vs. `LEFT JOIN` Outer Invalidation Under Writes**: When `UPDATE orders` runs at 5%–10% write ratios, the **5 `INNER JOIN` queries (`62.5%`)** in `complex-dashboard.sql` (which include explicit `WHERE ... AND o.tenant_id = :t` predicates) apply non-key updates in-place via CDC (`cdc_update`) and background MV rebuilds (`pgcache_cache_mv_rebuilds`), remaining **100% cache hits**. By contrast, the **3 `LEFT JOIN` queries (`37.5%`)** (where `o.tenant_id = :t` resides in the outer-join `ON` clause to preserve zero-order customers) undergo conservative invalidation on `orders` writes, settling the overall hit ratio at **63.1%–75.0% on DOKS** (`62.5%–67.6%` on Docker). See [`results/0.7.1/README.md`](results/0.7.1/README.md) for the complete breakdown.
 
+### 15.2 Sweep 5 — 1h30m endurance & Origin resource offload (DOKS + Grafana Cloud)
+
+**Driver: [`scripts/05-endurance-90m.sh`](scripts/05-endurance-90m.sh)** ·
+**Telemetry Stack: [`scripts/deploy-monitoring.sh`](scripts/deploy-monitoring.sh)** ·
+**Grafana Cloud Dashboard: [`https://pgcachebench.grafana.net/`](https://pgcachebench.grafana.net/)** ([`infra/grafana/pgcache-endurance-dashboard.json`](infra/grafana/pgcache-endurance-dashboard.json)) ·
+**Runbook & Methodology: [`results/endurance-90m/README.md`](results/endurance-90m/README.md)**
+
+To measure continuous hardware resource offloading on the Origin PostgreSQL server (CPU utilization by mode, memory working set, `do-block-storage` Disk Read/Write IOPS and MB/s, active backend connections, tuple scan rates, and logical replication WAL lag) over a sustained 90-minute horizon, Sweep 5 scales the dataset to **`SCALE=20` (~10 GB: 10M orders, 40M line items, 2M customers across 1,000 tenants — 20× larger than Origin's `shared_buffers=512MB`)** and runs six consecutive phases:
+
+| Phase ID | Duration | Block & Target | Workload Mix | Telemetry Objective |
+| :---: | :---: | :--- | :--- | :--- |
+| **Phase 1** | **30 min** (`1800s`) | **Block 1 — Origin Direct (`Path A`)** | `100% Read` (`complex-dashboard.sql`) | Baseline Origin CPU saturation, Disk Read IOPS/MBs, active backends, and tuple scans |
+| **Phase 2** | *Dynamic* (`warm_until_settled`) | **Block 1 — PgCache Warm-up** | `100% Read` (`complex-dashboard.sql`) | Base-table population and Materialized View construction until hit rate settles (`< 1%`) |
+| **Phase 3** | **30 min** (`1800s`) | **Block 1 — PgCache Proxy (`Path B`)** | `100% Read` (`complex-dashboard.sql`) | **Origin Offload**: Origin CPU, Disk Read IOPS, and active backends drop to near zero while TPS surges |
+| **Phase 4** | **15 min** (`900s`) | **Block 2 — Origin Direct (`Path A`)** | `95% Read` + `5% Write` (`write.sql`) | Origin under combined analytical reads and transactional `UPDATE`s + WAL flushes |
+| **Phase 5** | *Dynamic* (`warm_until_settled`) | **Block 2 — PgCache CDC Warm-up** | `95% Read` + `5% Write` (`write.sql`) | Stabilizes logical replication CDC invalidation loop under active writes |
+| **Phase 6** | **15 min** (`900s`) | **Block 2 — PgCache Proxy (`Path B`)** | `95% Read` + `5% Write` (`write.sql`) | Origin processes only the 5% write stream and WAL CDC replication while PgCache serves reads |
+
+All telemetry is streamed every 5–10 seconds to **[https://pgcachebench.grafana.net/](https://pgcachebench.grafana.net/)** with `grafana-alloy`, `postgres-exporter`, and `pgbench-exporter` pinned to the `loadgen` node (`bench_role=loadgen`) for zero observer CPU interference on `origin` and `pgcache`.
+
 ---
 
 ## 16. What this does not prove
@@ -1158,8 +1179,9 @@ measurement.
 ### One data size, and it fits in memory
 
 463 MB against 1 GB of `shared_buffers`. As section 7.2 explained, that is the
-hardest case for the cache and the result is conservative on that axis — but
-nothing here says what happens when the dataset exceeds the origin's memory.
+hardest case for the cache and the result is conservative on that axis — and
+Section 15.2 (`scripts/05-endurance-90m.sh`) extends this to a **~10 GB (`SCALE=20`)**
+dataset against `512 MB` of `shared_buffers` over a 1h30m endurance run.
 
 ### Two hundred tenants is not twenty thousand
 
@@ -1188,12 +1210,17 @@ pgcache-multi-tenant/
 ├── README.md                        this document
 ├── README-pt.md                     Portuguese version
 ├── AGENTS.md                        repository guidelines & 3-agent skill team
+├── .env.grafana.example             template for Grafana Cloud remote_write credentials
 ├── .agents/
 │   └── skills/
 │       ├── pgcache-benchmark/       Benchmark Coordinator skill
 │       ├── pgcache-complex-scenarios/ Complex SQL & correctness gate skill
 │       └── pgcache-metrics-analyst/ Telemetry & Amdahl's Law analyst skill
 ├── infra/
+│   ├── grafana/
+│   │   └── pgcache-endurance-dashboard.json Ready-to-import Grafana Cloud dashboard
+│   ├── monitoring/
+│   │   └── grafana-cloud-monitoring.yaml    node-exporter, postgres-exporter, pgbench-exporter & Alloy
 │   ├── terraform/
 │   │   └── aks/                     Ultra-low-cost Azure AKS + 3-node Spot Terraform
 │   ├── k8s/
@@ -1222,6 +1249,8 @@ pgcache-multi-tenant/
 │   ├── 02-concurrency-sweep.sh
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          complex scenario, tenant, client & write sweeps
+│   ├── 05-endurance-90m.sh          1h30m endurance & resource offload campaign (30+30m read, 15+15m R/W)
+│   ├── deploy-monitoring.sh         deploys Grafana Cloud telemetry stack to Kubernetes
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
 │   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
 │   ├── do-cluster.sh                turnkey DigitalOcean DOKS helper
@@ -1235,6 +1264,7 @@ pgcache-multi-tenant/
     ├── 0.6.4/                       results for PgCache 0.6.4
     ├── 0.7.0/                       results for PgCache 0.7.0
     ├── 0.7.1/                       results & complex scenarios for PgCache 0.7.1
+    ├── endurance-90m/               1h30m endurance & Origin resource offload runbook
     └── tuned/                       tuned network & engine profile results
 ```
 

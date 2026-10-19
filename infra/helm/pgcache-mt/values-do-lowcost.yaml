@@ -42,7 +42,7 @@ origin:
       cpu: "2500m"
       memory: "5Gi"
   storage:
-    size: 25Gi
+    size: 80Gi
     storageClassName: "do-block-storage"
 
 pgcache:
