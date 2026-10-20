@@ -2,72 +2,192 @@
 
 > 🇺🇸 **[Read in English](README.md)**
 
-Quando alguém mostra um benchmark de cache de banco de dados, os números geralmente parecem bons demais para ser verdade. Na maioria das vezes, isso acontece porque o teste rodou em um único notebook — onde o cliente, o cache e o banco dividiam a mesma CPU e conversavam via `localhost` em microssegundos — ou porque o teste avaliou apenas 1 cliente fazendo buscas simples por chave primária.
+Colocar um proxy de cache de leitura na frente do PostgreSQL realmente deixa um sistema SaaS multi-tenant mais rápido — e em quais situações ele encontra seus limites?
 
-Este relatório conta, de forma direta e transparente, o que acontece quando colocamos o **PgCache 0.7.1** na frente do **PostgreSQL 17** sob condições reais de um SaaS multi-tenant:
-- **Isolamento físico real na nuvem**: 3 nós dedicados no DigitalOcean Kubernetes (`s-4vcpu-8gb`, sendo uma VM exclusiva para o PostgreSQL, uma para o PgCache e uma para o gerador de carga). O Docker local é usado exclusivamente para testar a corretude do SQL, nunca para publicar números de performance.
-- **Telas reais de SaaS**: Desde um dashboard operacional leve de 8 consultas até telas corporativas pesadas com busca textual por substring (`ILIKE '%...%'`), `INNER JOIN` e `LEFT JOIN` entre 4 a 6 tabelas, e agregações analíticas com `GROUP BY` e `HAVING`.
-- **Sem sorte de corrida única**: Cada cenário da nossa bateria estatística foi executado **5 vezes independentes (`TRIALS=5`)**, destruindo e recriando todos os pods (`origin`, `pgcache` e `loadgen`) antes de cada rodada para medir tanto o **ganho médio** quanto a **variação real** entre execuções.
+Este artigo apresenta os resultados práticos de testar o **PgCache 0.7.1** (`pgcache/pgcache:0.7.1`) na frente do **PostgreSQL 17**. Toda a suíte foi desenhada para rodar em um **cluster Kubernetes de 3 nós em qualquer provedor de nuvem** (AWS EKS, Azure AKS, Google GKE ou DigitalOcean DOKS), posicionando o banco de dados, o cache e o gerador de carga em **três máquinas virtuais separadas** para que cada consulta pague a latência real de rede e tenha CPU e RAM isoladas. Para esta rodada de testes, executamos o cluster na DigitalOcean (`3× s-4vcpu-8gb` em uma mesma zona de disponibilidade).
 
 ---
 
-## 1. Resumo Direto ao Ponto (TL;DR)
+## 1. O Que Está Sendo Testado: O Banco de Dados e as Consultas SQL
 
-1. **Zero Respostas Erradas**: Antes de medir velocidade, nosso script de verificação ([`scripts/verify-correctness.sh`](../../scripts/verify-correctness.sh)) compara o resultado de cada consulta byte a byte entre o PostgreSQL e o PgCache. Todas as **8 consultas do dashboard básico** e todas as **12 consultas complexas** retornaram linhas 100% idênticas — tanto antes quanto imediatamente após escritas ao vivo (`UPDATE` e `INSERT`).
-2. **Consultas Simples vs. Consultas Pesadas (1,9× vs. 29× mais rápido)**:
-   - No **dashboard operacional leve** (`dashboard.sql`), o PostgreSQL já responde rápido (~58 ms para 8 consultas). Ainda assim, o PgCache praticamente **dobra a capacidade (+98%, subindo de 146 para 273 telas/s)**.
-   - Nas **telas corporativas pesadas** (joins de 4 a 6 tabelas, buscas com `ILIKE` e relatórios analíticos), o PostgreSQL sofre varrendo e juntando tabelas (130 a 308 ms por tela). O PgCache pré-computa essas visões em memória (Materialized Views) e entrega a tela inteira em **7 a 23 ms** — um salto de **15× a 29× mais vazão (+1.400% a +2.839%)**.
-3. **Por que a Regra 80/20 do Mundo Real Salva Clusters com Muitos Tenants**:
-   - Se mais de 1.000 tenants dispararem consultas pesadas com probabilidade 100% uniforme a partir de um cache frio, o cache passa o tempo todo tentando popular todos os tenants de uma vez.
-   - Mas o tráfego real de um SaaS segue a **regra de Pareto 80/20** (20% dos clientes geram 80% dos acessos). Quando testamos **2.000 tenants** com distribuição Zipfian 80/20, os tenants mais ativos aqueceram rápido (**64,1% de acerto no cache**) e o PgCache manteve vantagem mesmo partindo do zero.
-4. **Onde o Cache Sofre (Partida Fria com Escritas Pesadas)**:
-   - Quando o cache já está aquecido, ele lida bem com 5% a 10% de atualizações (`UPDATE`), mantendo **63% a 75% de acerto**.
-   - Porém, se você reiniciar o cache **totalmente frio** enquanto bombardeia o banco simultaneamente com `UPDATE orders` e `INSERT INTO order_item`, as invalidações contínuas de replicação brigam com o carregamento inicial do cache, derrubando a vazão abaixo do PostgreSQL puro (**-85%**). **Lição prática**: aqueça o cache com leituras antes de virar a chave de um tráfego intenso de escrita + leitura.
+> 📖 **Catálogo Completo de Modelagem e SQL**: Para ver o diagrama Entidade-Relacionamento, os índices e o código SQL completo de cada consulta, acesse o guia **[`workload/README-pt.md`](../../workload/README-pt.md)**.
+
+Modelamos um banco de dados de e-commerce SaaS multi-tenant criado pelos scripts [`sql/01-schema.sql`](../../sql/01-schema.sql) e [`sql/02-tenant.sql`](../../sql/02-tenant.sql), composto por **7 tabelas relacionais** (`customer`, `orders`, `order_item`, `product`, `category`, `seller` e `review`) populadas com **500.000 pedidos, 2.000.000 de itens de pedido, 300.000 avaliações, 200.000 produtos e 100.000 clientes**, distribuídos em até **2.000 empresas clientes (tenants)**.
+
+Em vez de testar consultas isoladas, cada requisição do `pgbench` simula um usuário abrindo uma **tela completa do SaaS**, executando de **4 a 8 consultas SQL em sequência**:
+
+| Arquivo SQL da Carga | Consultas por Tela | O Que a Tela Simula |
+|---|:---:|---|
+| **[`workload/dashboard.sql`](../../workload/dashboard.sql)** | **8** | **Dashboard Operacional Leve**: Contadores rápidos por índice (`GROUP BY status`), receita total, total de clientes, paginação de pedidos recentes e listagens simples com `INNER JOIN` de 2 tabelas. |
+| **[`workload/complex-search.sql`](../../workload/complex-search.sql)** | **4** | **Busca Textual por Substring (`ILIKE '%...%'`)**: Buscas com curinga inicial em nomes/e-mails de clientes, nomes de produtos, vendedores e textos de avaliações, cruzando de 3 a 6 tabelas. |
+| **[`workload/complex-joins.sql`](../../workload/complex-joins.sql)** | **4** | **Joins Profundos de 4 a 6 Tabelas (`JOIN` e `LEFT JOIN`)**: Cruzamentos longos (`orders → customer → order_item → product → category → seller → review`), incluindo `LEFT JOIN` para listar clientes sem pedidos e produtos sem avaliações. |
+| **[`workload/complex-analytics.sql`](../../workload/complex-analytics.sql)** | **4** | **Analytics Multidimensional**: Relatórios analíticos com `GROUP BY`, `FILTER (WHERE ...)`, faixas de ticket `CASE WHEN` e filtros `HAVING` sobre 4 a 6 tabelas. |
+| **[`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql)** | **8** | **Tela Corporativa Completa (Tráfego Uniforme)**: Combina 3 relatórios analíticos, 3 joins profundos de até 6 tabelas e 2 buscas textuais `ILIKE` em uma única tela pesada de 8 consultas, sorteando os tenants de forma uniforme (`1..N`). |
+| **[`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)** | **8** | **Tela Corporativa Completa (Tráfego Pareto 80/20)**: As mesmas 8 consultas pesadas acima, mas sorteando os tenants segundo uma distribuição **Zipfian (`s = 1.07`)**, onde ~20% dos tenants concentram ~80% dos acessos. |
+| **[`workload/write.sql`](../../workload/write.sql)** | **2** | **Escritas Transacionais ao Vivo (`UPDATE` + `INSERT`)**: Atualiza o valor de um pedido existente (`UPDATE orders`) e insere um novo item de pedido (`INSERT INTO order_item`), acionando a replicação lógica (CDC) no PgCache. |
+
+### Os Dois Caminhos Comparados
+- **Caminho A (PostgreSQL Direto)**: O gerador de carga conecta diretamente na VM do PostgreSQL 17.
+- **Caminho B (PgCache 0.7.1)**: O gerador de carga conecta na VM do PgCache, que responde às leituras em memória e acompanha o log de replicação lógica (CDC) do PostgreSQL para manter os dados atualizados.
 
 ---
 
-## 2. Como Ler as Tabelas
+## 2. Resumo Executivo (TL;DR)
 
-Cada "requisição" neste benchmark não é uma consulta SQL isolada — é o **carregamento completo de uma tela de SaaS**, composta por **4 a 8 consultas SQL executadas em sequência**:
-- **Caminho A (PostgreSQL Direto)**: A aplicação conversa direto com o PostgreSQL.
-- **Caminho B (PgCache 0.7.1)**: A aplicação conversa com o PgCache.
-- **Telas/s (RPS)**: Quantas telas completas o sistema entregou por segundo com 8 clientes simultâneos.
-- **Variação (`-Δ/+Δ` e `sd`)**: Nas 5 rodadas com recriação completa dos pods, `-Δ/+Δ` mostra o quanto a pior e a melhor rodada variaram em relação à média, e `sd` é o desvio padrão.
+1. **100% de Respostas Idênticas (`verify-correctness.sh`)**: Antes de medir velocidade, validamos que todas as **8 consultas do dashboard básico** e todas as **12 consultas complexas** devolvem exatamente as mesmas linhas (byte a byte) no PostgreSQL e no PgCache — tanto em leituras estáticas quanto imediatamente após escritas `UPDATE` e `INSERT` ao vivo.
+2. **Consultas Simples vs. Consultas Pesadas (1,98× vs. 29,4× mais rápido)**:
+   - No **dashboard operacional leve** ([`dashboard.sql`](../../workload/dashboard.sql)), o PostgreSQL já responde às 8 consultas indexadas em **57,8 ms**, então o PgCache quase **dobra a capacidade (+98%, subindo de 146 para 273 telas/s)**.
+   - Nas **telas corporativas pesadas** ([`complex-search.sql`](../../workload/complex-search.sql), [`complex-joins.sql`](../../workload/complex-joins.sql), [`complex-analytics.sql`](../../workload/complex-analytics.sql)), o PostgreSQL leva de **130 a 308 ms** varrendo e juntando tabelas. O PgCache pré-computa essas visões em memória (Materialized Views) e responde a tela inteira em **6,9 a 23,4 ms** — entregando **15× a 29,4× mais vazão (+1.400% a +2.839%)**.
+3. **Por que a Regra 80/20 do Mundo Real Faz Diferença em 2.000 Tenants**:
+   - Quando 2.000 tenants acessam o sistema seguindo a **regra de Pareto 80/20** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)), os 20% de clientes mais ativos aquecem rápido (**64,1% de acerto**) e mantêm o PgCache à frente do PostgreSQL mesmo partindo do zero.
+4. **Onde o Cache Sofre (Partida Fria com Escritas Simultâneas)**:
+   - Quando aquecido primeiro, o PgCache lida bem com 5% a 10% de tráfego de escrita (**63% a 75% de acerto**).
+   - Porém, se você reiniciar o cache **totalmente frio** enquanto bombardeia o banco simultaneamente com `UPDATE orders` e `INSERT INTO order_item` ([`write.sql`](../../workload/write.sql)), as invalidações de replicação brigam com o carregamento inicial do cache e derrubam a vazão (**-85%**). Sempre aqueça o cache com leituras antes de virar a chave de cargas mistas intensas.
 
 ---
 
-## 3. Resultados Multi-Trial: 5 Rodadas Recriando Todos os Pods (`TRIALS=5`)
+## 3. Bateria Multi-Trial: Tabela Consolidada e Números de Cada Uma das 5 Execuções (`TRIALS=5`)
 
-Nesta bateria, antes de cada uma das 5 rodadas, o script limpou os registros inseridos e reiniciou do zero os pods do PostgreSQL, do PgCache e do gerador de carga.
+Em ambientes de nuvem, rodar um benchmark apenas uma vez pode enganar — basta uma variação de rede ou de aquecimento para distorcer o número. Para eliminar anomalias pontuais, executamos cada cenário **5 vezes independentes (`TRIALS=5`, `DURATION=15s`, `CLIENTS=8`)**.
+
+Antes de **cada uma das 5 execuções**, nossa automação (`reset_all_pods` em [`scripts/lib.sh`](../../scripts/lib.sh)) limpou os registros inseridos e **recriou do zero os pods do PostgreSQL, do PgCache e do gerador de carga**, aquecendo o cache dinamicamente (`warm_until_settled`) antes de medir o Caminho B.
 
 Logs brutos: [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt) · [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt) · [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
 
-| O Que Testamos (200 Tenants, 8 Clientes) | PostgreSQL Direto (Caminho A) | PgCache 0.7.1 (Caminho B) | Taxa de Acerto (Hit) | Ganho Médio (Faixa nas 5 Rodadas) |
+### 3.1 Tabela Consolidada (Média das 5 Execuções)
+
+| Cenário e Arquivo SQL (`CLIENTS=8`) | PostgreSQL Direto (Média Caminho A) | PgCache 0.7.1 (Média Caminho B) | Taxa de Acerto | Ganho Médio (Variação Mín/Máx nas 5 Rodadas) |
 |---|---|---|---:|---|
-| **Dashboard Operacional Leve** (`dashboard.sql`, 8 consultas) | 57,8 ms · **146 telas/s** *(±40,5 sd)* | **29,4 ms · 273 telas/s** *(±16,3 sd)* | **100,0%** | **1,98× mais rápido (+98%)** *(-68% / +69%)* |
-| **Busca Textual por Substring** (`complex-search.sql`, 4 `ILIKE` + joins) | 129,6 ms · **63 telas/s** *(±9,2 sd)* | **6,9 ms · 1.170 telas/s** *(±126,1 sd)* | **100,0%** | **18,8× mais rápido (+1.778%)** *(-266% / +243%)* |
-| **Joins Profundos de 4 a 6 Tabelas** (`complex-joins.sql`, `INNER` e `LEFT JOIN`) | 238,9 ms · **34 telas/s** *(±2,8 sd)* | **8,2 ms · 991 telas/s** *(±160,6 sd)* | **100,0%** | **29,4× mais rápido (+2.839%)** *(-666% / +443%)* |
-| **Analytics Multidimensional** (`complex-analytics.sql`, `GROUP BY / HAVING`) | 175,3 ms · **46 telas/s** *(±4,1 sd)* | **9,0 ms · 905 telas/s** *(±122,1 sd)* | **100,0%** | **19,8× mais rápido (+1.883%)** *(-395% / +267%)* |
-| **Tela Corporativa Completa (Uniforme)** (`complex-dashboard.sql`, 8 consultas pesadas) | 307,5 ms · **26 telas/s** *(±1,2 sd)* | **23,4 ms · 389 telas/s** *(±132,6 sd)* | **100,0%** | **15,0× mais rápido (+1.400%)** *(-766% / +684%)* |
-| **Tela Corporativa (Pareto 80/20, 200 Tenants)** (`complex-dashboard-zipfian.sql`) | 339,2 ms · **24 telas/s** *(±4,1 sd)* | **76,0 ms · 267 telas/s** *(±191,3 sd)* | **97,5%** | **11,5× mais rápido (+1.051%)** *(-1.016% / +917%)* |
-| **Tela Corporativa (Pareto 80/20, 2.000 Tenants)** (`complex-dashboard-zipfian.sql`) | 373,1 ms · **22 telas/s** *(±1,9 sd)* | **351,2 ms · 24 telas/s** *(±5,4 sd)* | **64,1%** | **1,09× mais rápido (+9%)** *(-26% / +30%)* |
-| **Partida Fria + 5% Escritas (`UPDATE` + `INSERT`)** (`complex-dashboard` + `write.sql`) | 327,9 ms · **25 telas/s** *(±2,7 sd)* | 2.995,5 ms · **3 telas/s** *(±2,6 sd)* | **32,4%** | **0,15× (-85% mais lento)** *(-8% / +23%)* |
-
-### O Que Esses Números de 5 Rodadas Nos Ensinam
-
-- **Por que a diferença entre consultas leves e pesadas é tão grande**: Em 3 VMs separadas na nuvem, cada consulta SQL paga ~0,7 ms só para atravessar a rede. Uma tela de 8 consultas paga **~5,6 ms de puro trânsito de rede**, não importa quão rápido seja o banco. No dashboard leve (`57,8 ms` no PostgreSQL), o trânsito de rede e o parse básico do SQL consomem metade da economia possível, então o PgCache entrega **+98%**. Já nos joins de 4 a 6 tabelas (`238,9 ms` no PostgreSQL), as Materialized Views do PgCache transformam árvores pesadas de join em uma leitura simples de memória (`8,2 ms`), saltando para **29,4× mais velocidade (+2.839%)**.
-- **Como duas pequenas expressões SQL estavam escondendo o ganho do baseline**: Nas rodadas antigas, duas consultas em `dashboard.sql` faziam contas dentro do SQL (`OFFSET :off * 20` e `(ARRAY[...])[:st]`). O PgCache marcava essas duas consultas como não-cacheáveis e as repassava ao PostgreSQL, travando o ganho do baseline. Ao pré-calcular esses dois números antes de enviar o SQL, a taxa de acerto subiu para **100,0% reais** e a vazão dobrou para **273 telas/s (+98%)**.
-- **Por que rodar 5 vezes faz toda a diferença**: No teste Zipfian com 200 tenants, 4 das 5 rodadas bateram **99,3% a 100% de acerto (166 a 472 telas/s)**, enquanto a Rodada 4 estabilizou um pouco antes com **88,3% (31 telas/s)**. Se tivéssemos rodado apenas 1 vez, poderíamos ter publicado 472 telas/s ou 31 telas/s por pura sorte; com 5 rodadas independentes, enxergamos a média real (**267 telas/s, 11,5× mais rápido**) e a faixa honesta de variação.
+| **1. Dashboard Operacional Leve** ([`dashboard.sql`](../../workload/dashboard.sql), 200 tenants) | 57,8 ms · **146 telas/s** *(±40,5 sd)* | **29,4 ms · 273 telas/s** *(±16,3 sd)* | **100,0%** | **1,98× (+98%)** *(-68% / +69%)* |
+| **2. Busca Textual por Substring** ([`complex-search.sql`](../../workload/complex-search.sql), 200 tenants) | 129,6 ms · **63 telas/s** *(±9,2 sd)* | **6,9 ms · 1.170 telas/s** *(±126,1 sd)* | **100,0%** | **18,8× (+1.778%)** *(-266% / +243%)* |
+| **3. Joins Profundos (4 a 6 Tabelas)** ([`complex-joins.sql`](../../workload/complex-joins.sql), 200 tenants) | 238,9 ms · **34 telas/s** *(±2,8 sd)* | **8,2 ms · 991 telas/s** *(±160,6 sd)* | **100,0%** | **29,4× (+2.839%)** *(-666% / +443%)* |
+| **4. Analytics Multidimensional** ([`complex-analytics.sql`](../../workload/complex-analytics.sql), 200 tenants) | 175,3 ms · **46 telas/s** *(±4,1 sd)* | **9,0 ms · 905 telas/s** *(±122,1 sd)* | **100,0%** | **19,8× (+1.883%)** *(-395% / +267%)* |
+| **5. Tela Corporativa — Uniforme** ([`complex-dashboard.sql`](../../workload/complex-dashboard.sql), 200 tenants) | 307,5 ms · **26 telas/s** *(±1,2 sd)* | **23,4 ms · 389 telas/s** *(±132,6 sd)* | **100,0%** | **15,0× (+1.400%)** *(-766% / +684%)* |
+| **6. Tela Corporativa — Pareto 80/20** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql), 200 tenants) | 339,2 ms · **24 telas/s** *(±4,1 sd)* | **76,0 ms · 267 telas/s** *(±191,3 sd)* | **97,5%** | **11,5× (+1.051%)** *(-1.016% / +917%)* |
+| **7. Tela Corporativa — Pareto 80/20** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql), 2.000 tenants) | 373,1 ms · **22 telas/s** *(±1,9 sd)* | **351,2 ms · 24 telas/s** *(±5,4 sd)* | **64,1%** | **1,09× (+9%)** *(-26% / +30%)* |
+| **8. Partida Fria + 5% Escritas (`UPDATE`+`INSERT`)** ([`complex-dashboard.sql`](../../workload/complex-dashboard.sql) + [`write.sql`](../../workload/write.sql)) | 327,9 ms · **25 telas/s** *(±2,7 sd)* | 2.995,5 ms · **3 telas/s** *(±2,6 sd)* | **32,4%** | **0,15× (-85%)** *(-8% / +23%)* |
 
 ---
 
-## 4. Análise Detalhada: Varreduras de Escala no Cluster de 3 Nós (DOKS)
+### 3.2 Detalhamento Individual: Os Números de Cada Uma das 5 Execuções
 
-Além da bateria de 5 trials acima, executamos varreduras completas variando a quantidade de tenants, o número de usuários simultâneos e a taxa de escrita.
+Abaixo estão os números exatos medidos em cada uma das 5 rodadas (`Execução 1` a `Execução 5`), com recriação completa dos pods entre uma e outra.
 
-### 4.1 Escalando de 1 até 2.000 Tenants no Dashboard Leve
+#### Cenário 1: Dashboard Operacional Leve — [`workload/dashboard.sql`](../../workload/dashboard.sql) (8 consultas, 200 tenants)
 
-Multiplicar o número de clientes ativos por 2.000 derruba o cache em consultas operacionais? Não — após o aquecimento, o PgCache mantém **100,0% de acerto** de 1 até 2.000 tenants.
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 38,91 ms | 206 telas/s | 29,94 ms | 267 telas/s | 100,00% | **+29,6% (1,30×)** | 6 |
+| **Execução 2** | 72,54 ms | 110 telas/s | 27,18 ms | 294 telas/s | 100,00% | **+167,3% (2,67×)** | 5 |
+| **Execução 3** | 69,15 ms | 116 telas/s | 29,14 ms | 275 telas/s | 99,99% | **+137,1% (2,37×)** | 5 |
+| **Execução 4** | 47,41 ms | 169 telas/s | 28,58 ms | 280 telas/s | 100,00% | **+65,7% (1,66×)** | 6 |
+| **Execução 5** | 61,18 ms | 131 telas/s | 31,98 ms | 250 telas/s | 99,99% | **+90,8% (1,91×)** | 5 |
+| **Média (5 Execuções)** | **57,84 ms** | **146 telas/s** *(±40,5 sd, -36/+60)* | **29,36 ms** | **273 telas/s** *(±16,3 sd, -23/+21)* | **100,0%** | **+98% (1,98×)** | **5,4** |
+
+> **O que as 5 execuções revelam**: Repare como o PostgreSQL Direto (Caminho A) oscila entre `110 telas/s` e `206 telas/s` (`±40,5 sd`) logo após o pod reiniciar (enquanto seu buffer pool e disco aquecem), enquanto o PgCache (Caminho B) mantém uma estabilidade impressionante nas 5 rodadas (`250 a 294 telas/s`, `±16,3 sd`).
+
+---
+
+#### Cenário 2: Busca Textual por Substring (`ILIKE '%...%'`) — [`workload/complex-search.sql`](../../workload/complex-search.sql) (4 consultas, 200 tenants)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 107,94 ms | 74 telas/s | 6,61 ms | 1.210 telas/s | 100,00% | **+1.535,1% (16,4×)** | 5 |
+| **Execução 2** | 120,00 ms | 67 telas/s | 6,03 ms | 1.327 telas/s | 100,00% | **+1.880,6% (19,8×)** | 5 |
+| **Execução 3** | 161,05 ms | 50 telas/s | 7,84 ms | 1.020 telas/s | 100,00% | **+1.940,0% (20,4×)** | 6 |
+| **Execução 4** | 121,72 ms | 66 telas/s | 7,52 ms | 1.064 telas/s | 100,00% | **+1.512,1% (16,1×)** | 5 |
+| **Execução 5** | 137,43 ms | 58 telas/s | 6,50 ms | 1.230 telas/s | 100,00% | **+2.020,7% (21,2×)** | 5 |
+| **Média (5 Execuções)** | **129,63 ms** | **63 telas/s** *(±9,2 sd, -13/+11)* | **6,90 ms** | **1.170 telas/s** *(±126,1 sd, -150/+157)* | **100,0%** | **+1.778% (18,8×)** | **5,2** |
+
+---
+
+#### Cenário 3: Joins Profundos de 4 a 6 Tabelas (`JOIN` e `LEFT JOIN`) — [`workload/complex-joins.sql`](../../workload/complex-joins.sql) (4 consultas, 200 tenants)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 214,54 ms | 37 telas/s | 9,51 ms | 841 telas/s | 100,00% | **+2.173,0% (22,7×)** | 6 |
+| **Execução 2** | 242,98 ms | 33 telas/s | 7,17 ms | 1.116 telas/s | 100,00% | **+3.281,8% (33,8×)** | 7 |
+| **Execução 3** | 268,60 ms | 30 telas/s | 9,74 ms | 821 telas/s | 100,00% | **+2.636,7% (27,4×)** | 7 |
+| **Execução 4** | 245,73 ms | 33 telas/s | 8,02 ms | 997 telas/s | 100,00% | **+2.921,2% (30,2×)** | 6 |
+| **Execução 5** | 222,48 ms | 36 telas/s | 6,78 ms | 1.181 telas/s | 100,00% | **+3.180,6% (32,8×)** | 6 |
+| **Média (5 Execuções)** | **238,86 ms** | **34 telas/s** *(±2,8 sd, -4/+3)* | **8,24 ms** | **991 telas/s** *(±160,6 sd, -170/+190)* | **100,0%** | **+2.839% (29,4×)** | **6,4** |
+
+---
+
+#### Cenário 4: Analytics Multidimensional (`GROUP BY / FILTER / HAVING`) — [`workload/complex-analytics.sql`](../../workload/complex-analytics.sql) (4 consultas, 200 tenants)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 172,20 ms | 46 telas/s | 7,73 ms | 1.035 telas/s | 100,00% | **+2.150,0% (22,5×)** | 7 |
+| **Execução 2** | 175,57 ms | 46 telas/s | 7,84 ms | 1.020 telas/s | 100,00% | **+2.117,4% (22,2×)** | 6 |
+| **Execução 3** | 159,02 ms | 50 telas/s | 10,07 ms | 794 telas/s | 100,00% | **+1.488,0% (15,9×)** | 8 |
+| **Execução 4** | 203,17 ms | 39 telas/s | 10,33 ms | 774 telas/s | 100,00% | **+1.884,6% (19,8×)** | 6 |
+| **Execução 5** | 166,40 ms | 48 telas/s | 8,89 ms | 900 telas/s | 100,00% | **+1.775,0% (18,8×)** | 7 |
+| **Média (5 Execuções)** | **175,27 ms** | **46 telas/s** *(±4,1 sd, -7/+4)* | **8,97 ms** | **905 telas/s** *(±122,1 sd, -131/+130)* | **100,0%** | **+1.883% (19,8×)** | **6,8** |
+
+---
+
+#### Cenário 5: Tela Corporativa Completa (Sorteio Uniforme) — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) (8 consultas, 200 tenants)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 319,77 ms | 25 telas/s | 20,59 ms | 389 telas/s | 100,00% | **+1.456,0% (15,6×)** | 8 |
+| **Execução 2** | 316,40 ms | 25 telas/s | 14,66 ms | 546 telas/s | 100,00% | **+2.084,0% (21,8×)** | 7 |
+| **Execução 3** | 303,35 ms | 26 telas/s | 41,86 ms | 191 telas/s | 99,96% | **+634,6% (7,3×)** | 8 |
+| **Execução 4** | 284,58 ms | 28 telas/s | 17,26 ms | 463 telas/s | 100,00% | **+1.553,6% (16,5×)** | 8 |
+| **Execução 5** | 313,51 ms | 26 telas/s | 22,39 ms | 357 telas/s | 100,00% | **+1.273,1% (13,7×)** | 8 |
+| **Média (5 Execuções)** | **307,52 ms** | **26 telas/s** *(±1,2 sd, -1/+2)* | **23,35 ms** | **389 telas/s** *(±132,6 sd, -198/+157)* | **100,0%** | **+1.400% (15,0×)** | **7,8** |
+
+> **Por que olhar a Execução 3 é tão interessante**: Na Execução 3, a taxa de acerto ficou em `99,96%` em vez de `100,00%`. Como um único cache miss em uma consulta de 6 tabelas leva ~40 ms para ser populado na hora, esses míseros `0,04%` de misses puxaram a média da Execução 3 para `41,86 ms (191 telas/s)` contra `14,66–22,39 ms (357–546 telas/s)` nas outras 4 execuções. Mostrar as 5 execuções abertas permite enxergar tanto a velocidade típica (~400 a 546 telas/s) quanto o impacto de qualquer fração de cache miss.
+
+---
+
+#### Cenário 6: Tela Corporativa com Tráfego Pareto 80/20 (`200` Tenants) — [`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 266,60 ms | 30 telas/s | 48,32 ms | 166 telas/s | 99,28% | **+453,3% (5,5×)** | 8 |
+| **Execução 2** | 313,86 ms | 25 telas/s | 16,95 ms | 472 telas/s | 100,00% | **+1.788,0% (18,9×)** | 8 |
+| **Execução 3** | 412,61 ms | 19 telas/s | 37,92 ms | 211 telas/s | 99,73% | **+1.010,5% (11,1×)** | 8 |
+| **Execução 4** | 347,18 ms | 23 telas/s | 259,23 ms | 31 telas/s | 88,27% | **+34,8% (1,3×)** | 5 |
+| **Execução 5** | 355,99 ms | 22 telas/s | 17,59 ms | 455 telas/s | 100,00% | **+1.968,2% (20,7×)** | 8 |
+| **Média (5 Execuções)** | **339,25 ms** | **24 telas/s** *(±4,1 sd, -5/+6)* | **76,00 ms** | **267 telas/s** *(±191,3 sd, -236/+205)* | **97,5%** | **+1.051% (11,5×)** | **7,4** |
+
+> **Por que a Execução 4 parou de aquecer no ciclo 5**: Como a distribuição 80/20 repete bastante os mesmos 20% de tenants mais quentes, dois ciclos seguidos de aquecimento tiveram variação `< 1%` perto de `88%` de hit ratio, fazendo o algoritmo `warm_until_settled` iniciar a medição mais cedo enquanto os tenants menos frequentes ainda estavam carregando (`31 telas/s`). Nas 4 rodadas que completaram os 8 ciclos (Execuções 1, 2, 3 e 5), a vazão bateu **166 a 472 telas/s (5,5× a 20,7× mais rápido)**.
+
+---
+
+#### Cenário 7: Tela Corporativa com Tráfego Pareto 80/20 (`2.000` Tenants) — [`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 354,03 ms | 23 telas/s | 253,83 ms | 32 telas/s | 70,02% | **+39,1% (1,39×)** | 7 |
+| **Execução 2** | 374,73 ms | 21 telas/s | 310,03 ms | 26 telas/s | 68,46% | **+23,8% (1,24×)** | 8 |
+| **Execução 3** | 383,77 ms | 21 telas/s | 400,58 ms | 20 telas/s | 62,19% | -4,8% (0,95×) | 5 |
+| **Execução 4** | 413,70 ms | 19 telas/s | 392,73 ms | 20 telas/s | 61,13% | **+5,3% (1,05×)** | 5 |
+| **Execução 5** | 339,23 ms | 24 telas/s | 398,85 ms | 20 telas/s | 58,75% | -16,7% (0,83×) | 4 |
+| **Média (5 Execuções)** | **373,09 ms** | **22 telas/s** *(±1,9 sd, -3/+2)* | **351,21 ms** | **24 telas/s** *(±5,4 sd, -4/+8)* | **64,1%** | **+9% (1,09×)** | **5,8** |
+
+---
+
+#### Cenário 8: Partida Fria com 5% de Escritas `UPDATE` + `INSERT` — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) @ 95% + [`workload/write.sql`](../../workload/write.sql) @ 5%
+
+| Execução | Latência Caminho A | Vazão Caminho A | Latência Caminho B | Vazão Caminho B | Taxa de Acerto | Ganho (Speedup) | Ciclos Warmup |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Execução 1** | 322,66 ms | 25 telas/s | 2.851,12 ms | 3 telas/s | 32,95% | -88,0% (0,12×) | 3 |
+| **Execução 2** | 378,34 ms | 21 telas/s | 979,29 ms | 8 telas/s | 36,52% | -61,9% (0,38×) | 3 |
+| **Execução 3** | 285,19 ms | 28 telas/s | 3.263,27 ms | 2 telas/s | 29,37% | -92,9% (0,07×) | 3 |
+| **Execução 4** | 346,50 ms | 23 telas/s | 3.367,50 ms | 2 telas/s | 27,43% | -91,3% (0,09×) | 3 |
+| **Execução 5** | 306,65 ms | 26 telas/s | 4.516,17 ms | 2 telas/s | 35,59% | -92,3% (0,08×) | 3 |
+| **Média (5 Execuções)** | **327,87 ms** | **25 telas/s** *(±2,7 sd, -4/+3)* | **2.995,47 ms** | **3 telas/s** *(±2,6 sd, -1/+5)* | **32,4%** | **-85% (0,15×)** | **3,0** |
+
+---
+
+## 4. Varreduras de Escala: Tenants, Usuários Simultâneos e Escritas com Cache Aquecido
+
+Além da bateria de 5 execuções acima, realizamos varreduras variando um eixo por vez no cluster de 3 nós.
+
+### 4.1 Escalando de 1 até 2.000 Tenants no Dashboard Leve ([`workload/dashboard.sql`](../../workload/dashboard.sql))
 
 Log bruto: [`run-tenants-doks.txt`](run-tenants-doks.txt) · TSV: [`results-doks.tsv`](results-doks.tsv)
 
@@ -83,9 +203,7 @@ Log bruto: [`run-tenants-doks.txt`](run-tenants-doks.txt) · TSV: [`results-doks
 
 ---
 
-### 4.2 Escalando Tenants na Tela Corporativa Pesada (`1` a `1.000` Tenants Uniformes)
-
-Na tela corporativa pesada de 8 consultas (`complex-dashboard.sql`), cada tenant cria 8 Materialized Views multi-tabela. De **1 até 500 tenants ativos (4.000 visões)**, o PgCache aquece 100% dos dados e entrega **12× a 22× mais vazão**.
+### 4.2 Escalando Tenants na Tela Corporativa Pesada (`1` a `1.000` Tenants Uniformes — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql))
 
 Log bruto: [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt)
 
@@ -98,15 +216,9 @@ Log bruto: [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt)
 | **500** | 223,9 ms · 36 telas/s | **18,4 ms · 435 telas/s** | **12,1× (+1.108%)** | 100,0% | 8 |
 | **1.000** *(teto de 8 passes)* | 210,1 ms · 38 telas/s | 251,4 ms · 32 telas/s | 0,84× (-16%) | 68,1% | 4 |
 
-> **Por que o sorteio 100% uniforme desacelera em 1.000 tenants (e por que testamos 2.000 tenants com Pareto 80/20 na Seção 3)**: Quando sorteamos 1.000 tenants com probabilidade exatamente igual em janelas curtas de 15 segundos, o cache precisa construir 8.000 visões pesadas ao mesmo tempo, chegando a 68,1% de acerto antes do limite de aquecimento. Quando o tráfego segue a regra real 80/20 (`z_tenants=2000` na Seção 3), os clientes mais ativos aquecem primeiro e mantêm o PgCache na frente mesmo com **2.000 tenants**.
-
 ---
 
-### 4.3 Escalando Usuários Simultâneos (`1` a `32` Clientes na Tela Pesada)
-
-O que acontece quando o tráfego sobe de 1 usuário para 32 usuários simultâneos?
-- Com **1 cliente**, não há fila de CPU em lugar nenhum: o PgCache responde uma tela de 100,6 ms em **7,1 ms (14,0× mais rápido)**.
-- Com **32 clientes**, as 4 vCPUs do PostgreSQL saturam em **38 telas/s** e o tempo de resposta dispara para **835,5 ms** (quase 1 segundo inteiro por tela). O PgCache absorve a leitura em memória e entrega **1.020 telas/s (mais de 8.160 consultas SQL complexas por segundo)** a **31,4 ms (26,8× mais rápido)**.
+### 4.3 Escalando Usuários Simultâneos (`1` a `32` Clientes — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql))
 
 Log bruto: [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt)
 
@@ -120,13 +232,11 @@ Log bruto: [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt)
 
 ---
 
-### 4.4 O Que Acontece Quando os Dados Mudam? (Cache Aquecido vs. Escritas ao Vivo)
+### 4.4 Cache Aquecido sob Escritas ao Vivo ([`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) + `UPDATE orders`)
 
-Quando o cache **é aquecido primeiro** e depois recebe 5% ou 10% de tráfego de escrita (`UPDATE orders`), vemos um comportamento muito interessante dentro das 8 consultas da tela corporativa:
-- **5 das 8 consultas (`62,5%`) usam `INNER JOIN`**: Como elas filtram diretamente por `WHERE o.tenant_id = :t`, o PgCache atualiza os dados daquele tenant diretamente na memória via replicação lógica (CDC) e reconstrói apenas a visão daquele tenant em segundo plano. Essas 5 consultas continuam com **100% de acerto no cache**.
-- **3 das 8 consultas (`37,5%`) usam `LEFT JOIN`**: Para preservar clientes que ainda não têm nenhum pedido (`LEFT JOIN orders o ON ... AND o.tenant_id = :t`), o filtro do tenant fica dentro da cláusula `ON` do join externo. Sempre que a tabela `orders` recebe uma escrita, o PgCache invalida de forma conservadora essas 3 consultas.
-
-Por isso, a taxa de acerto global se estabiliza entre **63% e 75%**:
+Ao contrário do Cenário 8 da Seção 3 (que partiu de um pod 100% frio), este teste **aquece primeiro os 200 tenants no cache** e depois introduz 5% ou 10% de escritas ao vivo:
+- **5 das 8 consultas (`62,5%`) usam `INNER JOIN`** com `WHERE o.tenant_id = :t`, permitindo que o PgCache atualize os dados do tenant diretamente em memória via CDC e continue respondendo com **100% de acerto no cache**.
+- **3 das 8 consultas (`37,5%`) usam `LEFT JOIN`** (onde `o.tenant_id = :t` fica na cláusula `ON` do outer join para preservar clientes sem pedidos), que o PgCache invalida de forma conservadora sempre que a tabela `orders` muda.
 
 Log bruto: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)
 
@@ -141,25 +251,26 @@ Log bruto: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)
 
 ---
 
-## 5. Verificação de Corretude em 3 Estágios (Zero Respostas Diferentes)
+## 5. Verificação de Corretude em 3 Estágios ([`scripts/verify-correctness.sh`](../../scripts/verify-correctness.sh))
 
-Antes de confiar em qualquer número de performance, o script [`scripts/verify-correctness.sh`](../../scripts/verify-correctness.sh) executa três verificações rigorosas ([`verify-correctness-doks.txt`](verify-correctness-doks.txt)):
+Log completo da verificação: [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
 
-| Estágio | O Que é Verificado | Resultado no DOKS (3 Nós) |
+| Estágio | O Que é Verificado | Resultado |
 |---|---|---|
-| **Estágio 1: Consultas Básicas (8/8)** | Roda todas as 8 consultas do `dashboard.sql` no PostgreSQL e no PgCache e compara cada linha byte a byte. | **APROVADO (8/8 idênticas, 0 fora do cache)** |
-| **Estágio 2: Consultas Complexas Estáticas (12/12)** | Roda todas as 12 consultas complexas em 3 passagens (miss inicial, hit na tabela-base e hit na Materialized View). | **APROVADO (12/12 idênticas, 100% hit em MV)** |
+| **Estágio 1: Consultas Básicas (8/8)** | Roda todas as 8 consultas de [`workload/dashboard.sql`](../../workload/dashboard.sql) no PostgreSQL e no PgCache e compara cada linha byte a byte. | **APROVADO (8/8 idênticas, 100% cacheáveis)** |
+| **Estágio 2: Consultas Complexas Estáticas (12/12)** | Roda todas as 12 consultas complexas de [`complex-search.sql`](../../workload/complex-search.sql), [`complex-joins.sql`](../../workload/complex-joins.sql) e [`complex-analytics.sql`](../../workload/complex-analytics.sql) em 3 passagens. | **APROVADO (12/12 idênticas, 100% hit em MV)** |
 | **Estágio 3: Mutação CDC ao Vivo (`UPDATE` + `INSERT`)** | Executa `UPDATE orders`, `UPDATE order_item` e `INSERT INTO order_item` ao vivo no PostgreSQL, aguarda a replicação CDC e confere novamente as 12 consultas complexas no PgCache. | **APROVADO (12/12 idênticas após escritas)** |
 
 ---
 
 ## 6. Arquivos Brutos e Logs do Benchmark
 
+- **Documentação da Modelagem e das Consultas SQL**: [`workload/README-pt.md`](../../workload/README-pt.md)
 - **Logs da Bateria Multi-Trial (`TRIALS=5`, com Recriação Completa dos Pods)**:
   - Cenários Complexos (`TRIALS=5`): [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt)
   - Distribuição Pareto/Zipfian 80/20 (`TRIALS=5`): [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt)
   - Escrita Concorrente `UPDATE + INSERT` em Partida Fria (`TRIALS=5`): [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
-- **Logs de Varredura e Corretude no Cluster DOKS (3 Nós)**:
+- **Logs de Varredura e Corretude**:
   - Saída do Gate de Corretude: [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
   - Varredura de Tenants Baseline (`1..2000`): [`run-tenants-doks.txt`](run-tenants-doks.txt) · [`results-doks.tsv`](results-doks.tsv)
   - Comparativo de Cenários Complexos: [`run-complex-scenarios-doks.txt`](run-complex-scenarios-doks.txt) · [`results-complex-doks.tsv`](results-complex-doks.tsv)

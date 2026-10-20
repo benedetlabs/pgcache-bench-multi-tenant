@@ -2,9 +2,7 @@
 
 > 🇧🇷 **[Ler em português](README-pt.md)**
 
-This report documents the verification of **PgCache v0.7.0** (`pgcache/pgcache:0.7.0`) on our **3-node DigitalOcean Kubernetes (DOKS)** cluster (`3× s-4vcpu-8gb` in a single availability zone), comparing both the default cluster setup and our tuned Linux network & engine profile from 1 to 2,000 active tenants.
-
-> **Why Only 3-Node Cloud Numbers Are Shown**: Local Docker Compose is used strictly to set up the database and test SQL correctness locally; all performance numbers come exclusively from the 3-node Kubernetes cluster.
+This report documents the verification of **PgCache v0.7.0** (`pgcache/pgcache:0.7.0`) on a **3-node Kubernetes cluster in the cloud** (executed on DigitalOcean DOKS with `3× s-4vcpu-8gb` in a single availability zone, and reproducible on any cloud provider), comparing both the default cluster setup and our tuned Linux network & engine profile from 1 to 2,000 active tenants. See the [**Workload Guide (`workload/README.md`)**](../../workload/README.md) and [`workload/dashboard.sql`](../../workload/dashboard.sql) for the exact SQL queries executed.
 
 ---
 

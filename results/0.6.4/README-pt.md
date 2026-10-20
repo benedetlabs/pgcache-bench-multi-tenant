@@ -2,9 +2,7 @@
 
 > 🇺🇸 **[Read in English](README.md)**
 
-Este relatório documenta a verificação da versão **PgCache v0.6.4** (`pgcache/pgcache:0.6.4`) no nosso cluster **DigitalOcean Kubernetes de 3 nós (DOKS)** (`3× s-4vcpu-8gb` na mesma zona), rodando o PostgreSQL 17, o PgCache e o gerador de carga em três máquinas virtuais separadas.
-
-> **Por que mostramos apenas números do cluster de 3 nós**: O Docker Compose local é usado exclusivamente para montar o ambiente e testar a corretude do SQL; todos os números de performance vêm do cluster Kubernetes de 3 nós na nuvem.
+Este relatório documenta a verificação da versão **PgCache v0.6.4** (`pgcache/pgcache:0.6.4`) em um **cluster Kubernetes de 3 nós na nuvem** (executado na DigitalOcean DOKS com `3× s-4vcpu-8gb` na mesma zona, podendo ser reproduzido em qualquer provedor cloud), rodando o PostgreSQL 17, o PgCache e o gerador de carga em três máquinas virtuais separadas. Consulte o [**Guia de Workloads (`workload/README-pt.md`)**](../../workload/README-pt.md) e o arquivo [`workload/dashboard.sql`](../../workload/dashboard.sql) para ver as consultas SQL exatas do teste.
 
 ---
 

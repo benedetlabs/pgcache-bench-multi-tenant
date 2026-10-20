@@ -24,7 +24,8 @@ Este diretório contém todos os scripts de carga SQL do `pgbench` utilizados pa
    - [5.2 `complex-joins.sql` — Cadeias Profundas de `JOIN` e `LEFT JOIN` em 4 a 6 Tabelas (4 Declarações)](#52-complex-joinssql--cadeias-profundas-de-join-e-left-join-em-4-a-6-tabelas-4-declarações)
    - [5.3 `complex-analytics.sql` — Agregações Analíticas Multidimensionais (4 Declarações)](#53-complex-analyticssql--agregações-analíticas-multidimensionais-4-declarações)
    - [5.4 `complex-dashboard.sql` — Tela Corporativa Unificada de Analytics e Busca (8 Declarações)](#54-complex-dashboardsql--tela-corporativa-unificada-de-analytics-e-busca-8-declarações)
-6. [Resumo de Desempenho entre Cargas (Docker vs. 3 Nós DOKS)](#6-resumo-de-desempenho-entre-cargas-docker-vs-3-nós-doks)
+   - [5.5 `complex-dashboard-zipfian.sql` — Tráfego Corporativo Pareto 80/20 (8 Declarações)](#55-complex-dashboard-zipfiansql--tráfego-corporativo-pareto-8020-8-declarações)
+6. [Resumo de Desempenho entre Cargas (Cluster de 3 Nós na Nuvem)](#6-resumo-de-desempenho-entre-cargas-cluster-de-3-nós-na-nuvem)
 
 ---
 
@@ -32,12 +33,13 @@ Este diretório contém todos os scripts de carga SQL do `pgbench` utilizados pa
 
 | Script | Declarações | Tabelas Acessadas | Padrões Relacionais Principais | Script de Varredura |
 |---|---:|---|---|---|
-| [`dashboard.sql`](dashboard.sql) | 8 | `orders`, `customer`, `order_item`, `product` | Contagens pontuais, `GROUP BY` em tabela única, paginação `OFFSET`, `INNER JOIN` de 2 tabelas | `01-tenant-sweep.sh`, `02-client-sweep.sh`, `03-write-pressure.sh` |
-| [`write.sql`](write.sql) | 1 | `orders` | `UPDATE orders SET total = total + 1 WHERE id IN (SELECT ...)` escopado por tenant | `03-write-pressure.sh`, `04-complex-sweep.sh writes` |
+| [`dashboard.sql`](dashboard.sql) | 8 | `orders`, `customer`, `order_item`, `product` | Contagens pontuais, `GROUP BY` em tabela única, paginação `OFFSET`, `INNER JOIN` de 2 tabelas (100% cacheável) | `01-tenant-sweep.sh`, `02-concurrency-sweep.sh`, `03-write-sweep.sh` |
+| [`write.sql`](write.sql) | 2 | `orders`, `order_item` | `UPDATE orders` + `INSERT INTO order_item` escopados por tenant | `03-write-sweep.sh`, `04-complex-sweep.sh writes` |
 | [`complex-search.sql`](complex-search.sql) | 4 | Todas as 7 tabelas | Busca textual `ILIKE '%...%'` com curinga inicial + `JOIN` e `LEFT JOIN` de 3 a 6 tabelas | `04-complex-sweep.sh scenarios` |
 | [`complex-joins.sql`](complex-joins.sql) | 4 | Todas as 7 tabelas | `INNER JOIN` e `LEFT JOIN` em múltiplos saltos de 4 a 6 tabelas (preservando clientes sem pedidos e produtos sem reviews) | `04-complex-sweep.sh scenarios` |
 | [`complex-analytics.sql`](complex-analytics.sql) | 4 | Todas as 7 tabelas | `GROUP BY` multidimensional, `FILTER (WHERE ...)`, faixas `CASE WHEN`, filtros `HAVING` | `04-complex-sweep.sh scenarios` |
-| [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | Todas as 7 tabelas | Tela corporativa unificada combinando 3 rollups analíticos, 3 visões `JOIN`/`LEFT JOIN` profundas e 2 buscas `ILIKE` | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
+| [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | Todas as 7 tabelas | Tela corporativa unificada combinando 3 rollups analíticos, 3 visões `JOIN`/`LEFT JOIN` profundas e 2 buscas `ILIKE` (sorteio uniforme) | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
+| [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) | 8 | Todas as 7 tabelas | Mesma tela corporativa de 8 consultas usando distribuição realista **Pareto 80/20 (`random_zipfian(1, :tenants, 1.07)`)** | `04-complex-sweep.sh` (`scenarios`, `zipfian`) |
 
 ---
 
@@ -118,7 +120,7 @@ erDiagram
 
 ### 2.2 Tabelas, Cardinalidades e Fatores de Escala
 
-A geração de dados é parametrizada por `:scale` (padrão `1`) e `:tenants` (padrão `200`, escalado até `1.000` no Docker e `2.000` no DOKS):
+A geração de dados é parametrizada por `:scale` (padrão `1`) e `:tenants` (padrão `200`, escalado até `2.000` tenants ativos):
 
 | Tabela | Escopo de Tenant | Linhas (`SCALE=1`) | Linhas (`SCALE=5`) | Linhas (`SCALE=10`) | Linhas por Tenant (`SCALE=1, TENANTS=200`) | Linhas por Tenant (`SCALE=1, TENANTS=2000`) |
 |---|---|---:|---:|---:|---:|---:|
@@ -269,17 +271,18 @@ Simula o carregamento do painel operacional principal de uma organização inqui
 
 #### Variáveis
 ```sql
-\set t    random(1, :tenants)
-\set off  random(0, 9)
-\set st   random(1, 4)
-\set cust random(1, 100000)
+\set t         random(1, :tenants)
+\set off       random(0, 9)
+\set off_rows  :off * 20
+\set st        random(1, 4)
+\set min_total :st * 50
 ```
 
 #### Declarações SQL
 
 ```sql
 -- Declaração 1: Contagem de pedidos por status (cartões KPI no topo do painel)
-SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status;
+SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status ORDER BY status;
 
 -- Declaração 2: Receita total e número total de pedidos do tenant
 SELECT sum(total), count(*) FROM orders WHERE tenant_id = :t;
@@ -287,49 +290,62 @@ SELECT sum(total), count(*) FROM orders WHERE tenant_id = :t;
 -- Declaração 3: Total de clientes pertencentes ao tenant
 SELECT count(*) FROM customer WHERE tenant_id = :t;
 
--- Declaração 4: Página de pedidos recentes (usa o índice composto orders_tenant_created)
+-- Declaração 4: Página de pedidos recentes (:off_rows pré-calculado para 100% de cacheabilidade)
 SELECT id, status, total, created_at
   FROM orders WHERE tenant_id = :t
- ORDER BY created_at DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET :off_rows;
 
--- Declaração 5: Contador filtrado de pedidos para uma aba de status específica
+-- Declaração 5: Contador filtrado de pedidos por faixa mínima de valor (:min_total)
 SELECT count(*) FROM orders
- WHERE tenant_id = :t AND status = (ARRAY['new','paid','shipped','done'])[:st];
+ WHERE tenant_id = :t AND total >= :min_total;
 
 -- Declaração 6: 10 pedidos mais recentes enriquecidos com o nome do cliente (INNER JOIN de 2 tabelas)
 SELECT o.id, o.total, c.name
   FROM orders o JOIN customer c ON c.id = o.customer_id
- WHERE o.tenant_id = :t
- ORDER BY o.created_at DESC LIMIT 10;
+ WHERE o.tenant_id = :t AND c.tenant_id = :t
+ ORDER BY o.created_at DESC, o.id DESC LIMIT 10;
 
 -- Declaração 7: Top 10 produtos mais vendidos em quantidade no tenant (JOIN de 2 tabelas + GROUP BY + ORDER BY)
 SELECT p.name, sum(oi.qty)
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- GROUP BY p.name ORDER BY 2 DESC LIMIT 10;
+ GROUP BY p.id, p.name ORDER BY 2 DESC, p.id ASC LIMIT 10;
 
 -- Declaração 8: Página de itens de pedido com nome do produto (JOIN de 2 tabelas + paginação)
 SELECT oi.id, oi.qty, oi.price, p.name
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- ORDER BY oi.id DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY oi.id DESC LIMIT 20 OFFSET :off_rows;
 ```
 
 ---
 
-### 4.2 [`write.sql`](write.sql) — Carga de Escrita Escopada por Tenant (1 Declaração)
+### 4.2 [`write.sql`](write.sql) — Carga de Escrita Escopada por Tenant (`UPDATE` + `INSERT`, 2 Declarações)
 
-Utilizado nas varreduras mistas de leitura e escrita (`pgbench -f dashboard.sql@95 -f write.sql@5` ou `-f complex-dashboard.sql@95 -f write.sql@5`) para gerar atualizações escopadas por tenant que acionam invalidações via replicação lógica (CDC) no PgCache:
+Utilizado nas varreduras mistas de leitura e escrita (`pgbench -f dashboard.sql@95 -f write.sql@5` ou `-f complex-dashboard.sql@95 -f write.sql@5`) para gerar tanto atualizações de pedidos existentes quanto inserções de novos itens de pedido por tenant, acionando invalidações via replicação lógica (CDC) no PgCache:
 
-#### Variáveis e Declaração SQL
+#### Variáveis e Declarações SQL
 ```sql
-\set t random(1, :wtenants)
-\set n random(0, 2000)
+\set t     random(1, :wtenants)
+\set n     random(0, 200)
+\set qty   random(1, 5)
+\set price random(10, 250)
+\set prod  random(1, 1000)
 
+-- 1. Atualiza o valor total de um pedido existente do tenant :t
 UPDATE orders SET total = total + 1
  WHERE id IN (
    SELECT id FROM orders WHERE tenant_id = :t ORDER BY id OFFSET :n LIMIT 1
  );
+
+-- 2. Insere um novo item de pedido para o tenant :t (usa order_item_id_seq >= 100.000.000)
+INSERT INTO order_item (order_id, product_id, qty, price, tenant_id)
+SELECT o.id, :prod, :qty, :price, :t
+  FROM orders o
+ WHERE o.tenant_id = :t
+ ORDER BY o.id
+OFFSET :n
+ LIMIT 1;
 ```
 
 ---
@@ -615,16 +631,29 @@ Modela uma tela corporativa completa combinando **8 declarações complexas** (e
 
 ---
 
-## 6. Resumo de Desempenho entre Cargas (Docker vs. 3 Nós DOKS)
+### 5.5 [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) — Tráfego Corporativo Pareto 80/20 (8 Declarações)
 
-Medido no **PgCache `0.7.1`** (`TENANTS=200`, `CLIENTS=8`, protocolo `warm_until_settled`, `100,0%` hit ratio):
+Idêntico ao `complex-dashboard.sql` nas 8 consultas SQL, mas o sorteio do tenant segue uma **distribuição Zipfian / Pareto (`s = 1.07`)** em vez de um sorteio uniforme:
 
-| Script de Carga | Declarações | Origem Docker Local | PgCache 0.7.1 Docker | Speedup Docker | Origem 3 Nós DOKS | PgCache 0.7.1 DOKS | Speedup DOKS |
-|---|---:|---|---|:---:|---|---|:---:|
-| [`dashboard.sql`](dashboard.sql) (`dash_base`) | 8 | 37,61 ms · 213 rps | **16,05 ms · 498 rps** | **2,3× (`+134%`)** | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **1,45× (`+45%`)** |
-| [`complex-search.sql`](complex-search.sql) (`search`) | 4 | 88,67 ms · 90 rps | **1,53 ms · 5.223 rps** | **58,0× (`+5.703%`)** | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **14,7× (`+1.369%`)** |
-| [`complex-joins.sql`](complex-joins.sql) (`joins`) | 4 | 121,46 ms · 66 rps | **1,25 ms · 6.426 rps** | **97,4× (`+9.636%`)** | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **31,3× (`+3.033%`)** |
-| [`complex-analytics.sql`](complex-analytics.sql) (`analytics`) | 4 | 92,31 ms · 87 rps | **1,39 ms · 5.737 rps** | **65,9× (`+6.494%`)** | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **18,0× (`+1.703%`)** |
-| [`complex-dashboard.sql`](complex-dashboard.sql) (`cplx_dash`) | 8 | 209,62 ms · 38 rps | **2,86 ms · 2.798 rps** | **73,6× (`+7.263%`)** | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **17,8× (`+1.685%`)** |
+```sql
+\set t random_zipfian(1, :tenants, 1.07)
+```
 
-Para os relatórios completos e logs brutos, consulte [`../results/0.7.1/README-pt.md`](../results/0.7.1/README-pt.md) e [`../README-pt.md`](../README-pt.md).
+Em sistemas SaaS reais, cerca de 20% dos clientes geram 80% do tráfego. O script `complex-dashboard-zipfian.sql` avalia como o PgCache se comporta em cenários com muitos tenants (até **2.000 tenants**) quando os clientes mais ativos concentram a maior parte das requisições.
+
+---
+
+## 6. Resumo de Desempenho entre Cargas (Cluster de 3 Nós na Nuvem)
+
+Medido em **5 rodadas independentes com recriação de pods (`TRIALS=5`)** em um **cluster Kubernetes de 3 nós na nuvem** (`PgCache 0.7.1`, `TENANTS=200`, `CLIENTS=8`):
+
+| Script de Carga | Declarações | PostgreSQL Direto (Caminho A) | PgCache 0.7.1 (Caminho B) | Taxa de Acerto (Hit) | Ganho Médio (5 Rodadas) |
+|---|---:|---|---|---:|---|
+| [`dashboard.sql`](dashboard.sql) (`dash_base`) | 8 | 57,8 ms · **146 telas/s** *(±40,5 sd)* | **29,4 ms · 273 telas/s** *(±16,3 sd)* | **100,0%** | **1,98× (`+98%`)** |
+| [`complex-search.sql`](complex-search.sql) (`search`) | 4 | 129,6 ms · **63 telas/s** *(±9,2 sd)* | **6,9 ms · 1.170 telas/s** *(±126,1 sd)* | **100,0%** | **18,8× (`+1.778%`)** |
+| [`complex-joins.sql`](complex-joins.sql) (`joins`) | 4 | 238,9 ms · **34 telas/s** *(±2,8 sd)* | **8,2 ms · 991 telas/s** *(±160,6 sd)* | **100,0%** | **29,4× (`+2.839%`)** |
+| [`complex-analytics.sql`](complex-analytics.sql) (`analytics`) | 4 | 175,3 ms · **46 telas/s** *(±4,1 sd)* | **9,0 ms · 905 telas/s** *(±122,1 sd)* | **100,0%** | **19,8× (`+1.883%`)** |
+| [`complex-dashboard.sql`](complex-dashboard.sql) (`cplx_dash`) | 8 | 307,5 ms · **26 telas/s** *(±1,2 sd)* | **23,4 ms · 389 telas/s** *(±132,6 sd)* | **100,0%** | **15,0× (`+1.400%`)** |
+| [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) (`z_tenants=200`) | 8 | 339,2 ms · **24 telas/s** *(±4,1 sd)* | **76,0 ms · 267 telas/s** *(±191,3 sd)* | **97,5%** | **11,5× (`+1.051%`)** |
+
+Para o detalhamento completo das 5 rodadas e os logs brutos, consulte [`../results/0.7.1/README-pt.md`](../results/0.7.1/README-pt.md) e [`../README-pt.md`](../README-pt.md).

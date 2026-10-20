@@ -4,7 +4,12 @@
 
 Esta pasta reúne os resultados práticos de colocar o **PgCache** na frente do **PostgreSQL 17** ao longo de várias versões (`0.6.3`, `0.6.4`, `0.7.0` e `0.7.1`) e em dois perfis bem diferentes de aplicações SaaS multi-tenant.
 
-> **Por que não usamos números de notebook aqui**: Todos os resultados de performance publicados neste repositório vêm **exclusivamente de clusters Kubernetes de 3 nós na nuvem (DigitalOcean DOKS)**, onde o PostgreSQL, o PgCache e o gerador de carga rodam em três máquinas virtuais físicas separadas. O Docker local (`infra/docker-compose.yml`) serve apenas para montar o ambiente e testar se o SQL retorna as respostas certas — nunca para medir velocidade.
+> **Topologia Cloud de 3 Nós (Qualquer Provedor)**: Todos os benchmarks deste repositório rodam em um **cluster Kubernetes de 3 nós na nuvem**, onde o **PostgreSQL (`origin`)**, o **PgCache (`pgcache`)** e o **gerador de carga (`loadgen`)** ficam em três máquinas virtuais dedicadas e separadas. Essa mesma bateria pode ser executada em **qualquer provedor de nuvem** (AWS EKS, Azure AKS, GCP GKE, DigitalOcean DOKS, etc.); os números publicados abaixo foram coletados na **DigitalOcean (`3× s-4vcpu-8gb`)**.
+
+### Entendendo as Consultas SQL do Teste
+Antes de olhar os números, consulte o [**Guia de Workloads e Consultas SQL (`workload/README-pt.md`)**](../workload/README-pt.md) para entender o banco de 7 tabelas ([`sql/01-schema.sql`](../sql/01-schema.sql), [`sql/02-tenant.sql`](../sql/02-tenant.sql)) e todos os 7 arquivos `.sql` testados:
+- **Dashboard Simples e Escritas**: [`workload/dashboard.sql`](../workload/dashboard.sql) (8 consultas rápidas por índice) e [`workload/write.sql`](../workload/write.sql) (escritas `UPDATE + INSERT` ao vivo com invalidação CDC).
+- **Telas Corporativas Complexas**: [`workload/complex-search.sql`](../workload/complex-search.sql) (busca textual `ILIKE '%...%'`), [`workload/complex-joins.sql`](../workload/complex-joins.sql) (`INNER` e `LEFT JOIN` de 4 a 6 tabelas), [`workload/complex-analytics.sql`](../workload/complex-analytics.sql) (`GROUP BY / HAVING`), [`workload/complex-dashboard.sql`](../workload/complex-dashboard.sql) (tela completa de 8 consultas) e [`workload/complex-dashboard-zipfian.sql`](../workload/complex-dashboard-zipfian.sql) (tráfego Pareto 80/20).
 
 ### Navegação Rápida
 - [**PgCache 0.7.1 — Bateria de 5 Rodadas (`TRIALS=5`) e Cenários Corporativos Complexos**](0.7.1/README-pt.md) *(Ponto de partida recomendado)*

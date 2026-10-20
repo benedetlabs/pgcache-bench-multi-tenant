@@ -4,7 +4,12 @@
 
 This folder contains the empirical results of putting **PgCache** in front of **PostgreSQL 17** across multiple product releases (`0.6.3`, `0.6.4`, `0.7.0`, and `0.7.1`) and across two very different kinds of multi-tenant SaaS workloads.
 
-> **Why You Won't Find Laptop Numbers Here**: All performance results in this repository come **exclusively from 3-node Kubernetes clusters in the cloud (DigitalOcean DOKS)**, where PostgreSQL, PgCache, and the benchmark client run on three separate physical virtual machines. Local Docker (`infra/docker-compose.yml`) is used only to set up the database and verify SQL correctness — never to claim speedups.
+> **Cloud-Agnostic 3-Node Topology**: Every benchmark in this repository runs on a **3-node Kubernetes cluster in the cloud**, where **PostgreSQL (`origin`)**, **PgCache (`pgcache`)**, and the **benchmark client (`loadgen`)** each run on their own dedicated virtual machine. You can execute this exact suite on **any cloud provider** (AWS EKS, Azure AKS, GCP GKE, DigitalOcean DOKS, etc.); the numbers published below were collected on **DigitalOcean Kubernetes (`3× s-4vcpu-8gb`)**.
+
+### Understanding the SQL Workloads
+Before reading the numbers, check out the [**Workload Architecture & SQL Catalog (`workload/README.md`)**](../workload/README.md) for a step-by-step explanation of the 7-table schema ([`sql/01-schema.sql`](../sql/01-schema.sql), [`sql/02-tenant.sql`](../sql/02-tenant.sql)) and all 7 SQL benchmark scripts:
+- **Simple Dashboards & Writes**: [`workload/dashboard.sql`](../workload/dashboard.sql) (8 fast indexed lookups) and [`workload/write.sql`](../workload/write.sql) (live `UPDATE + INSERT` CDC invalidation).
+- **Complex Enterprise Screens**: [`workload/complex-search.sql`](../workload/complex-search.sql) (`ILIKE '%...%'` search), [`workload/complex-joins.sql`](../workload/complex-joins.sql) (4–6 table `INNER`/`LEFT JOIN`), [`workload/complex-analytics.sql`](../workload/complex-analytics.sql) (`GROUP BY / HAVING`), [`workload/complex-dashboard.sql`](../workload/complex-dashboard.sql) (8-query unified screen), and [`workload/complex-dashboard-zipfian.sql`](../workload/complex-dashboard-zipfian.sql) (80/20 Pareto traffic).
 
 ### Quick Navigation
 - [**PgCache 0.7.1 — Multi-Trial (`TRIALS=5`) & Complex Enterprise Scenarios**](0.7.1/README.md) *(Recommended starting point)*
