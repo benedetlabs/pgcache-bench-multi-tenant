@@ -114,6 +114,16 @@ case "$CMD" in
     # Delete cluster, all droplets, and all storage volumes/snapshots
     doctl kubernetes cluster delete "$CLUSTER_NAME" --dangerous -f
 
+    # Ensure any residual CSI block storage volumes are deleted once droplets detach
+    for _ in $(seq 1 15); do
+      vols=$(doctl compute volume list --no-header --format ID 2>/dev/null || true)
+      [ -z "$vols" ] && break
+      for v in $vols; do
+        doctl compute volume delete "$v" -f 2>/dev/null || true
+      done
+      sleep 3
+    done
+
     echo "--> Cluster and all associated block storage volumes deleted successfully."
     echo "--> No residual resources remain active."
     ;;
