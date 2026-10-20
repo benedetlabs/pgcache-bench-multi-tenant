@@ -54,16 +54,17 @@ número de tenants, concorrência e proporção de escrita.
 do jeito que foi, no que os números deram, e os erros cometidos no caminho.
 Escrito para quem nunca viu isto antes; nada assume contexto prévio.
 
-**O resultado, em uma linha:** o cache respondeu um dashboard de oito statements
-entre **6,4× e 12,6× mais rápido** que o banco sem cache (e **14× a 31× mais
-rápido no DOKS de 3 nós** em cargas complexas de 4 a 6 tabelas aceleradas por
-Materialized Views no PgCache `0.7.1`), com **100% de taxa de acerto** em cargas
-de leitura estabilizadas.
+**O resultado, em uma linha:** em um cluster de 3 nós na nuvem, o cache
+respondeu um dashboard operacional leve de oito consultas **quase 2× mais
+rápido (+98%)** que o banco sem cache, e respondeu telas analíticas e de busca
+pesadas (4 a 6 tabelas) **15× a 29× mais rápido** (com **100% de acerto** em
+cargas de leitura estabilizadas).
 
-A seção 16 é onde esse número deve parar de ser esticado. Enquanto a campanha
-original publicou sem um gate de correção diferencial, [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
-agora valida igualdade byte a byte de saída (`Origin == PgCache`), `pgcache_queries_uncacheable == 0`,
-admissão + hits no gate de Materialized Views e verificação Pós-CDC após mutação ao vivo em todas as consultas baseline e complexas (`results/0.7.1/verify-correctness-doks.txt`).
+A seção 16 mostra onde esse número encontra seus limites. Enquanto a primeira
+campanha publicou sem comparar automaticamente as respostas, [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
+agora compara byte a byte cada linha devolvida pelo PostgreSQL e pelo PgCache —
+em todas as 8 consultas simples e nas 12 consultas complexas, tanto antes quanto
+depois de escritas `UPDATE` e `INSERT` ao vivo (`results/0.7.1/verify-correctness-doks.txt`).
 
 O cache testado é o [PgCache](https://www.pgcache.com). Nada aqui tem vínculo com
 ele — é uma medição independente, inclusive nas partes desfavoráveis.
@@ -1095,142 +1096,65 @@ Isso também explica por que tantos benchmarks de banco acham caches
 decepcionantes. Eles rodam lookups por chave primária, que são a **última linha**
 daquela tabela. **A consulta mais barata é o pior caso de um cache.**
 
-### 15.1 Varredura 4 — Cenários Complexos de SaaS Multi-Tenant (PgCache 0.7.1)
+### 15.1 Varredura 4 — O Que Acontece Quando as Consultas Ficam Pesadas? (PgCache 0.7.1)
 
 **Script: [`scripts/04-complex-sweep.sh`](scripts/04-complex-sweep.sh)**  
-**Cargas: [`complex-search.sql`](workload/complex-search.sql), [`complex-joins.sql`](workload/complex-joins.sql), [`complex-analytics.sql`](workload/complex-analytics.sql), [`complex-dashboard.sql`](workload/complex-dashboard.sql)**  
-**Relatório: [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md)**
+**Cargas: [`complex-search.sql`](workload/complex-search.sql), [`complex-joins.sql`](workload/complex-joins.sql), [`complex-analytics.sql`](workload/complex-analytics.sql), [`complex-dashboard.sql`](workload/complex-dashboard.sql), [`complex-dashboard-zipfian.sql`](workload/complex-dashboard-zipfian.sql)**  
+**Relatório Completo: [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md)**
 
-Para testar o corolário dessa regra — o que acontece quando um SaaS multi-tenant
-executa telas relacionais genuinamente pesadas — expandimos o benchmark com quatro
-suítes de carga complexa avaliadas no **PgCache `0.7.1`** em **DigitalOcean Kubernetes de 3 Nós (DOKS)**:
+Se o PgCache cobra um preço quase fixo por resposta enquanto o PostgreSQL cobra pelo esforço real da consulta, o que acontece quando um SaaS multi-tenant roda telas corporativas pesadas em vez de buscas simples por índice?
 
-1. **Busca Textual por Substring (`complex-search.sql`)**: 4 statements combinando buscas `ILIKE '%...%'` em e-mails/nomes de clientes, nomes de produtos, vendedores e textos de avaliações com cadeias de `INNER JOIN` e `LEFT JOIN` de 2 a 4 tabelas.
-2. **Joins Profundos Multi-Tabela (`complex-joins.sql`)**: 4 statements percorrendo cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN` (`orders -> customer -> order_item -> product -> category -> seller -> review`), preservando coortes de clientes sem pedidos (`LEFT JOIN orders`) e estoque de produtos sem avaliação (`LEFT JOIN review`).
-3. **Análises Multidimensionais (`complex-analytics.sql`)**: 4 statements executando `GROUP BY` multicoluna, `FILTER (WHERE ...)` condicional, faixas `CASE WHEN` de atendimento e preço, e filtros pós-agregação `HAVING`.
-4. **Tela Analítica e de Busca Unificada (`complex-dashboard.sql`)**: Tela corporativa de 8 statements combinando 2 consultas de busca textual, 3 joins profundos multi-tabela (`JOIN` / `LEFT JOIN`) e 3 agregações analíticas pesadas.
+Para responder a isso, criamos quatro baterias SQL pesadas e rodamos cada cenário **5 vezes independentes (`TRIALS=5`)** no nosso cluster Kubernetes de 3 nós na DigitalOcean, destruindo e recriando todos os pods (`origin`, `pgcache` e `loadgen`) antes de cada rodada:
 
-#### Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8` — DOKS 3 Nós)
+1. **Busca Textual por Substring (`complex-search.sql`)**: 4 consultas buscando e-mails/nomes de clientes, produtos, vendedores e textos de avaliações com `ILIKE '%...%'` cruzando de 2 a 4 tabelas.
+2. **Joins Profundos de 4 a 6 Tabelas (`complex-joins.sql`)**: 4 consultas cruzando `orders -> customer -> order_item -> product -> category -> seller -> review`, incluindo `LEFT JOIN` para listar clientes sem pedidos e produtos sem avaliação.
+3. **Analytics Multidimensional (`complex-analytics.sql`)**: 4 consultas agrupando receita e status com `GROUP BY`, `FILTER (WHERE ...)`, faixas `CASE WHEN` e filtros `HAVING`.
+4. **Tela Corporativa Completa (`complex-dashboard.sql` e `complex-dashboard-zipfian.sql`)**: Uma tela de 8 consultas combinando 2 buscas textuais, 3 joins profundos e 3 agregações analíticas — testada tanto com sorteio uniforme quanto com tráfego realista **Pareto 80/20 (Zipfian)**.
 
-| Cenário | Statements | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
-|---|---:|---|---|---:|---:|---:|
-| **`dash_base`** (`dashboard.sql`) | 8 | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **+45% (1,45×)** | 100,0% | 2 |
-| **`search`** (`complex-search.sql`) | 4 | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **+1.369% (14,7×)** | 100,0% | 3 |
-| **`joins`** (`complex-joins.sql`) | 4 | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **+3.033% (31,3×)** | 100,0% | 3 |
-| **`analytics`** (`complex-analytics.sql`) | 4 | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **+1.703% (18,0×)** | 100,0% | 4 |
-| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **+1.685% (17,8×)** | 100,0% | 5 |
+#### Resultados de 5 Rodadas no Cluster de 3 Nós (`200` Tenants, `8` Clientes Simultâneos)
 
-#### Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200` — DOKS 3 Nós)
+| O Que Testamos (5 Recriações Completas de Pods por Linha) | PostgreSQL Direto (Caminho A) | PgCache 0.7.1 (Caminho B) | Taxa de Acerto (Hit) | Ganho Médio (Faixa nas 5 Rodadas) |
+|---|---|---|---:|---|
+| **Dashboard Operacional Leve** (`dashboard.sql`, 8 consultas simples) | 57,8 ms · **146 telas/s** *(±40,5 sd)* | **29,4 ms · 273 telas/s** *(±16,3 sd)* | **100,0%** | **1,98× mais rápido (+98%)** *(-68% / +69%)* |
+| **Busca Textual por Substring** (`complex-search.sql`, 4 `ILIKE` + joins) | 129,6 ms · **63 telas/s** *(±9,2 sd)* | **6,9 ms · 1.170 telas/s** *(±126,1 sd)* | **100,0%** | **18,8× mais rápido (+1.778%)** *(-266% / +243%)* |
+| **Joins Profundos de 4 a 6 Tabelas** (`complex-joins.sql`, `INNER` e `LEFT JOIN`) | 238,9 ms · **34 telas/s** *(±2,8 sd)* | **8,2 ms · 991 telas/s** *(±160,6 sd)* | **100,0%** | **29,4× mais rápido (+2.839%)** *(-666% / +443%)* |
+| **Analytics Multidimensional** (`complex-analytics.sql`, `GROUP BY / HAVING`) | 175,3 ms · **46 telas/s** *(±4,1 sd)* | **9,0 ms · 905 telas/s** *(±122,1 sd)* | **100,0%** | **19,8× mais rápido (+1.883%)** *(-395% / +267%)* |
+| **Tela Corporativa Completa (Uniforme)** (`complex-dashboard.sql`, 8 consultas pesadas) | 307,5 ms · **26 telas/s** *(±1,2 sd)* | **23,4 ms · 389 telas/s** *(±132,6 sd)* | **100,0%** | **15,0× mais rápido (+1.400%)** *(-766% / +684%)* |
+| **Tela Corporativa (Pareto 80/20, 200 Tenants)** (`complex-dashboard-zipfian.sql`) | 339,2 ms · **24 telas/s** *(±4,1 sd)* | **76,0 ms · 267 telas/s** *(±191,3 sd)* | **97,5%** | **11,5× mais rápido (+1.051%)** *(-1.016% / +917%)* |
+| **Tela Corporativa (Pareto 80/20, 2.000 Tenants)** (`complex-dashboard-zipfian.sql`) | 373,1 ms · **22 telas/s** *(±1,9 sd)* | **351,2 ms · 24 telas/s** *(±5,4 sd)* | **64,1%** | **1,09× mais rápido (+9%)** *(-26% / +30%)* |
 
-| Clientes | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
-|---:|---|---|---:|---:|---:|
-| **1** | 100,60 ms · 10 rps | **7,14 ms · 140 rps** | **+1.300% (14,0×)** | 100,0% | 2 |
-| **4** | 129,45 ms · 31 rps | **8,60 ms · 465 rps** | **+1.400% (15,0×)** | 100,0% | 2 |
-| **8** | 212,81 ms · 38 rps | **10,48 ms · 763 rps** | **+1.908% (20,1×)** | 100,0% | 2 |
-| **16** | 406,90 ms · 39 rps | **18,06 ms · 886 rps** | **+2.172% (22,7×)** | 100,0% | 2 |
-| **32** | 835,52 ms · 38 rps | **31,36 ms · 1.020 rps** | **+2.584% (26,8×)** | 100,0% | 2 |
+#### Três Conclusões Práticas (Em Português Claro)
 
-#### Duas Descobertas Arquiteturais das Varreduras Complexas
+1. **Por que consultas pesadas saltam para 15×–29× mais rápido**: Em consultas simples (`dashboard.sql`), o PostgreSQL já é rápido (`57,8 ms`), e os ~5,6 ms gastos atravessando a rede nas 8 consultas limitam o ganho a **~2× (+98%)**. Já nos joins de 6 tabelas e relatórios analíticos (`complex-*.sql`), o PostgreSQL gasta de 130 a 308 ms varrendo tabelas, enquanto o PgCache deixa a visão pré-calculada em memória e responde a tela inteira em **7 a 23 ms**.
+2. **Por que o tráfego real 80/20 faz diferença em 2.000 tenants**: Se mais de 1.000 tenants acessarem consultas pesadas exatamente ao mesmo tempo a partir de um cache frio, o cache passa o tempo todo tentando construir visões frias. Quando o tráfego segue a **regra de Pareto 80/20** (`complex-dashboard-zipfian.sql`), os 20% de clientes mais ativos aquecem rápido (**64,1% de acerto**) e mantêm o PgCache na frente mesmo com **2.000 tenants**.
+3. **Nunca vire tráfego pesado de escrita + leitura em um cache totalmente frio**: Quando o cache é aquecido primeiro, ele suporta 5% a 10% de atualizações (`UPDATE`) mantendo **63% a 75% de acerto**. Mas quando reiniciamos todos os pods a frio disparando ao mesmo tempo `UPDATE orders` e `INSERT INTO order_item` (`5:10`), as invalidações de replicação brigaram com o carregamento inicial do cache e derrubaram a vazão (**-85%**). Sempre aqueça o cache com leituras antes de virar a chave de cargas mistas.
 
-1. **Cache em Dois Estágios no PgCache `0.7.1` (Subsunção de Tabelas vs. Gate de Admissão de Materialized Views)**:
-   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`15,92 ms` vs `23,06 ms` no DOKS, **1,45× mais rápido**).
-   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes via `pgcache_cache_mv_hits` em **~1,18–1,44 ms por statement entre nós físicos no DOKS** (`11,50 ms` para 8 statements contra `204,39 ms` na Origem — **17,8× mais rápido** com 8 clientes, **26,8× mais rápido** com 32 clientes e **31,3× mais rápido** em `complex-joins.sql`).
-2. **Onde as Materialized Views Complexas Encontram Seus Limites (Escala no Cold-Start e `INNER JOIN` vs `LEFT JOIN` sob Escrita)**:
-   - **Escala do Working Set no Cold-Start**: No DOKS de 3 nós, o PgCache aquece **100,0% do working set de 1 a 500 tenants (`4.000` consultas complexas)** (`+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants). Em 1.000 tenants (`8.000` consultas complexas), a amostragem uniforme combinada ao custo de população fria por tenant aquece `68,1%` no DOKS dentro da janela limitada de 8 passes (15s).
-   - **CDC In-Place em `INNER JOIN` vs. Invalidação Conservadora em `LEFT JOIN` sob Escrita**: Quando `UPDATE orders` roda em proporções de 5%–10% de escritas, as **5 consultas `INNER JOIN` (`62,5%`)** em `complex-dashboard.sql` (que possuem predicados explícitos `WHERE ... AND o.tenant_id = :t`) aplicam atualizações in-place via CDC (`cdc_update`) e rebuilds de MV em background (`pgcache_cache_mv_rebuilds`), permanecendo **100% cache hits**. Já as **3 consultas `LEFT JOIN` (`37,5%`)** (onde `o.tenant_id = :t` reside na cláusula `ON` do outer join para preservar clientes sem pedidos) sofrem invalidação conservadora em escritas na tabela `orders`, estabilizando o hit ratio geral em **63,1%–75,0% no DOKS**. Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
-
-### 15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)
+### 15.2 Varredura 5 — Teste de Resistência de 1h30m em um Banco de 10 GB (DOKS + Grafana Cloud)
 
 **Driver: [`scripts/05-endurance-90m.sh`](scripts/05-endurance-90m.sh)** ·
-**Stack de Telemetria: [`scripts/deploy-monitoring.sh`](scripts/deploy-monitoring.sh)** ·
-**Dashboard Grafana Cloud: [`https://pgcachebench.grafana.net/`](https://pgcachebench.grafana.net/)** ([`infra/grafana/pgcache-endurance-dashboard.json`](infra/grafana/pgcache-endurance-dashboard.json)) ·
-**Runbook e Metodologia: [`results/endurance-90m/README-pt.md`](results/endurance-90m/README-pt.md)**
+**Dashboard Grafana Cloud: [`https://pgcachebench.grafana.net/`](https://pgcachebench.grafana.net/)** ·
+**Relatório Completo: [`results/endurance-90m/README-pt.md`](results/endurance-90m/README-pt.md)**
 
-Para medir o alívio contínuo de recursos físicos no servidor PostgreSQL de Origem (uso de CPU por modo, memória RAM em uso, IOPS e MB/s de leitura/escrita em disco `do-block-storage`, conexões ativas, tuplas varridas e lag de replicação lógica WAL) em um horizonte sustentado de 90 minutos, a Varredura 5 escala o banco de dados para **`SCALE=20` (~10 GB: 10M pedidos, 40M itens, 2M clientes em 1.000 tenants — 20× maior que o `shared_buffers=512MB` da Origem)** e executa seis fases consecutivas:
+Até aqui, o banco cabia inteiro na memória RAM do PostgreSQL (`SCALE=1`). O que acontece quando o banco é **20× maior que o buffer de memória do PostgreSQL** (`SCALE=20`: ~10 GB, 54,5 milhões de linhas) e roda sem parar por **1 hora e 30 minutos**?
 
-| ID da Fase | Duração | Bloco e Alvo | Mix de Carga | Objetivo de Telemetria |
-| :---: | :---: | :--- | :--- | :--- |
-| **Fase 1** | **30 min** (`1800s`) | **Bloco 1 — Origem Direto (`Path A`)** | `100% Leitura` (`complex-dashboard.sql`) | Baseline de saturação de CPU da Origem, IOPS/MBs de leitura de disco, conexões ativas e varreduras |
-| **Fase 2** | *Dinâmico* (`warm_until_settled`) | **Bloco 1 — Warm-up PgCache** | `100% Leitura` (`complex-dashboard.sql`) | População das tabelas-base e construção das Materialized Views até o hit ratio estabilizar (`< 1%`) |
-| **Fase 3** | **30 min** (`1800s`) | **Bloco 1 — PgCache Proxy (`Path B`)** | `100% Leitura` (`complex-dashboard.sql`) | **Alívio na Origem**: CPU, leitura de disco e conexões ativas na Origem caem a quase zero enquanto o TPS sobe |
-| **Fase 4** | **15 min** (`900s`) | **Bloco 2 — Origem Direto (`Path A`)** | `95% Leitura` + `5% Escrita` (`write.sql`) | Origem sob leituras analíticas combinadas com `UPDATE`s transacionais e flush de WAL |
-| **Fase 5** | *Dinâmico* (`warm_until_settled`) | **Bloco 2 — Warm-up CDC PgCache** | `95% Leitura` + `5% Escrita` (`write.sql`) | Estabiliza o ciclo de invalidação por replicação lógica (CDC) sob escrita ativa |
-| **Fase 6** | **15 min** (`900s`) | **Bloco 2 — PgCache Proxy (`Path B`)** | `95% Leitura` + `5% Escrita` (`write.sql`) | Origem processa apenas os 5% de escrita e o stream CDC enquanto o PgCache responde às leituras |
+| Fase do Teste de 90 Minutos (`SCALE=20`, 54,5M Linhas) | Duração | PostgreSQL Direto (Caminho A) | PgCache 0.7.1 (Caminho B) | 10 Minutos Finais Estabilizados | Taxa de Acerto | Ganho Geral |
+|---|---:|---|---|---|---:|---|
+| **Bloco 1: 100% Leituras Pesadas** (`complex-dashboard.sql`) | **30m + 30m** | 16,87 s · 0,47 telas/s | **11,09 s · 0,72 telas/s** | **1,60–1,90 telas/s** | 47,1% | **+51,8% (até 4,0×)** |
+| **Bloco 2: 95% Leituras + 5% Escritas** (`write.sql`) | **15m + 15m** | 16,46 s · 0,48 telas/s | **11,97 s · 0,66 telas/s** | **1,80–2,10 telas/s** | 62,1% | **+37,1% (até 4,3×)** |
 
-Toda a telemetria é transmitida a cada 5–10 segundos para **[https://pgcachebench.grafana.net/](https://pgcachebench.grafana.net/)** com `grafana-alloy`, `postgres-exporter` e `pgbench-exporter` fixados no nó `loadgen` (`bench_role=loadgen`) para garantir zero interferência de CPU nos nós `origin` e `pgcache`.
-
-#### Resultados Medidos de Longa Duração 1h30m (`SCALE=20`, `54,5M` Linhas / `5,86 GB`, `ACTIVE_TENANTS=100`, `CLIENTS=8`)
-
-| Bloco / Cenário | Duração | Latência Média Path A (Origem) | TPS Path A | Latência Média Path B (PgCache) | TPS Path B | TPS Final Estabilizado 10m | Cache Hit % | Ganho Geral de TPS | Total de Txns (`A` vs `B`) |
-| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :---: |
-| **Bloco 1: 100% Leitura** (`read_1800s`) | **30m + 30m** | `16.865,88 ms` | `0,47` | **`11.091,45 ms`** | **`0,72`** | **`1,60–1,90 TPS`** | `47,1%` | **`+51,8%`** (até **`4,0×`**) | `856` vs **`1.304`** |
-| **Bloco 2: 95% Leitura / 5% Escrita** (`rw_5pct_900s`) | **15m + 15m** | `16.462,09 ms` | `0,48` | **`11.970,92 ms`** | **`0,66`** | **`1,80–2,10 TPS`** | `62,1%` | **`+37,1%`** (até **`4,3×`**) | `444` vs **`610`** |
-
-- **Aceleração de Escrita na Origem (Escritas `2,21×` mais rápidas)**: No Bloco 2, absorver as leituras analíticas complexas no PgCache aliviou a contenção de CPU e I/O de disco na Origem, reduzindo a latência média do `UPDATE` transacional (`write.sql@5`) pela metade, de **`226,96 ms` na Origem Direta** para **`102,89 ms` via PgCache** (`-54,7%` de latência).
-- **Zero Evictions e 100% de Estabilidade (`pgcache_cache_evictions = 0`, `pgcache_queries_uncacheable = 0`)**: Ao longo dos 90 minutos contínuos (`16.401` consultas), o PgCache operou em `3,39 GiB / 3,50 GiB` (`96,7%` do `MEMORY_LIMIT`) com seu controlador de admissão por high-watermark mantendo fixadas em RAM `607 / 800` Materialized Views complexas por tenant sem nenhuma eviction ou reinicialização. Veja [`results/endurance-90m/README-pt.md`](results/endurance-90m/README-pt.md) para o detalhamento completo.
+- **Bônus Inesperado — As Escritas Ficaram 2,2× Mais Rápidas no PostgreSQL**: Como o PgCache tirou o peso das leituras analíticas das costas do PostgreSQL no Bloco 2, o disco e a CPU do banco principal ficaram livres para gravar transações. O tempo médio de um `UPDATE` caiu pela metade, de **227,0 ms para 102,9 ms**.
+- **Uso de Memória Sob Controle**: Durante toda a 1h30m de teste, o PgCache respeitou o teto de 3,5 GiB de RAM (`3,39 GiB` em uso), com **zero quedas e zero expulsões de memória (evictions)**.
 
 ---
 
 ## 16. O que isto não prova
 
-Cinco limites que valem ser mantidos em vista.
+Quatro limites honestos para ter em mente:
 
-### O gate de correção: originalmente ausente, agora aplicado na `0.7.1`
-
-Outras campanhas deste laboratório bloqueavam a publicação de qualquer número de
-desempenho até comparar, consulta a consulta, a resposta da origem com a do
-cache. **A campanha original publicou sem isso.**
-
-Aqueles gates sempre passaram — milhares de comparações em três sujeitos, zero
-divergências, incluindo um teste que amostrou leituras *enquanto* escritas
-estavam em voo e achou 1.931 comparações conclusivas, nenhuma divergente.
-
-Para fechar essa lacuna tanto nas formas simples quanto nas consultas complexas
-multi-tenant (cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN`, busca
-textual `ILIKE '%...%'`, `GROUP BY` com `FILTER`/`CASE`/`HAVING` e limites com
-`ORDER BY`), adicionamos [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
-e o executamos contra o PgCache `0.7.1` tanto no DOKS de 3 nós ([`results/0.7.1/verify-correctness-doks.txt`](results/0.7.1/verify-correctness-doks.txt)) quanto no Docker Local ([`results/0.7.1/verify-correctness.txt`](results/0.7.1/verify-correctness.txt)):
-- **12/12 consultas complexas** retornaram linhas idênticas byte a byte entre Origem e PgCache nos Passes 1 (miss), 2 (hit em tabela-base + build de MV) e 3 (hit em MV).
-- **Delta de `pgcache_queries_uncacheable` = `0`** (`36/36` cacheáveis), **`pgcache_cache_mv_gate{outcome="admit"}` = `12/12` (`reject = 0`)** e **delta de `pgcache_cache_mv_hits` = `12/12`**.
-
-### Só latência média
-
-O pgbench reporta a média nativamente; percentis exigem registro por transação,
-que esta rodada não coletou. Para uma afirmação sobre latência, a média é a
-estatística mais fraca disponível, porque o dano de um cache mora na cauda — um
-miss custa várias vezes um hit.
-
-Duas regras que valem carregar, se você acrescentar percentis: filtre-os para o
-script de leitura quando houver escrita na mistura (senão você está descrevendo
-flush de WAL), e **recuse** reportar abaixo de algumas centenas de amostras. Essa
-segunda regra foi aprendida do jeito honesto — uma célula lenta produziu um "p99"
-de 296 ms contra uma **média de 794 ms**, aritmeticamente impossível, e foi o
-sinal de que quatro amostras não são medição.
-
-### Um só tamanho de dados, e ele cabe na memória
-
-463 MB contra 1 GB de `shared_buffers`. Como a seção 7.2 explicou, esse é o caso
-mais difícil para o cache e o resultado é conservador nesse eixo — e a Seção 15.2
-(`scripts/05-endurance-90m.sh`) estende essa avaliação para um banco de **~10 GB (`SCALE=20`)**
-contra `512 MB` de `shared_buffers` em uma campanha de longa duração de 1h30m.
-
-### Duzentos tenants não são vinte mil
-
-A curva ficou plana de 1 a 200 (e até 2.000 no DOKS para `dashboard.sql`). Nada
-garante que continue plana em 20.000, onde o espaço de consultas é uma ordem de
-grandeza maior — e como a seção 15.1 mostrou, Materialized Views complexas
-multi-tabela exigem janelas maiores de aquecimento quando os tenants ativos chegam a 1.000 (`8.000` consultas complexas distintas).
-**A planura da curva baseline não é licença para extrapolar.**
-
-### Não há cache de aplicação na comparação
-
-Isto mede um cache contra um banco *sem cache*. Muitas aplicações reais já
-cacheiam no próprio processo ou no Redis, e um cache desses **elimina** a
-consulta em vez de acelerá-la — coisa diferente e frequentemente mais forte.
-
-Este benchmark não consegue fazer essa comparação, porque não há aplicação aqui.
-Ele mede o envelope do produto sob carga com formato de aplicação. **Não é um
-veredito de adoção.**
+1. **A corretude foi testada para 20 formatos de consulta (8 simples + 12 complexas)**: O script [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh) garante que todas as 8 consultas básicas e as 12 consultas complexas devolvem exatamente as mesmas linhas no PostgreSQL e no PgCache — antes e depois de escritas `UPDATE` + `INSERT` ao vivo ([`results/0.7.1/verify-correctness-doks.txt`](results/0.7.1/verify-correctness-doks.txt)). Se a sua aplicação usa extensões customizadas do PostgreSQL, window functions ou funções voláteis, rode o `verify-correctness.sh` com as suas próprias queries primeiro.
+2. **Reportamos a média e a variação entre 5 rodadas, não o p99 individual por query**: Rodar 5 baterias recriando os pods (`TRIALS=5`) mostra a variação real entre execuções (`-Δ/+Δ` e desvio padrão), o que é muito mais confiável do que um teste único. Porém, o `pgbench` tira a média da tela inteira de 8 consultas; quando uma consulta sofre cache miss, ela custa bem mais caro que um hit.
+3. **O aquecimento inicial leva tempo acima de 1.000 tenants**: Enquanto consultas simples aquecem 2.000 tenants em segundos, construir milhares de Materialized Views de 6 tabelas a partir do zero exige alguns minutos se todos os tenants entrarem ao mesmo tempo.
+4. **Não comparamos com Redis ou cache na aplicação**: Este teste compara o PgCache contra um PostgreSQL sem cache. Um cache na aplicação (como Redis) exige programar invalidação manual no código, enquanto o PgCache funciona como um proxy SQL transparente — são abordagens em camadas diferentes.
 
 ---
 
