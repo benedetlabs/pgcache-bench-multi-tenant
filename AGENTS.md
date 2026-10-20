@@ -16,10 +16,12 @@ This repository contains a rigorous, reproducible benchmark comparing PostgreSQL
    - In multi-table `JOIN` and `LEFT JOIN` queries, always include explicit `:t` literal predicates (`o.tenant_id = :t`, `oi.tenant_id = :t`, `c.tenant_id = :t`) on every joined tenant-scoped table so PgCache isolates CDC invalidations per tenant and pushes down tenant index predicates during population.
    - Omit `OFFSET` (or use `OFFSET 0`) on complex multi-table `JOIN` and aggregation queries so 100% of queries pass PgCache 0.7+'s Materialized View gate (`pgcache_cache_mv_gate{outcome="admit"}`) and serve hits via `pgcache_cache_mv_hits`.
    - In `pgbench` scripts, pre-compute any arithmetic expressions using `\set` before interpolating them into SQL `WHERE` or `HAVING` clauses, and group directly on base columns (`GROUP BY o.status`) rather than expressions (`SELECT coalesce(o.status, 'no_orders')`).
-   - Run `./scripts/verify-correctness.sh` to verify `uncacheable_delta == 0`, `mv_gate_reject_delta == 0`, `mv_hits_delta == 12`, and byte-for-byte differential output equality between Origin and PgCache across all 12 complex queries.
-3. **Mandatory Dynamic Warm-up (`warm_until_settled`)**:
+   - Run `./scripts/verify-correctness.sh` to verify `uncacheable_delta == 0`, `mv_gate_reject_delta == 0`, `mv_hits_delta == 12`, and byte-for-byte differential output equality between Origin and PgCache across all 8 baseline queries, all 12 complex static queries, and all 12 post-CDC live mutation queries (Pass 4).
+   - Always include `pgcache_queries_uncacheable` in the total query denominator (`hit / (hit + miss + uncacheable)`) so uncacheable queries never masquerade as 100% cache hit ratios.
+3. **Mandatory Dynamic Warm-up (`warm_until_settled`) & Multi-Trial Pod Recreation (`TRIALS=3..5`)**:
    - **NEVER** use a fixed warm-up duration. Fixed warm-up times produce flawed hit ratio conclusions.
    - Always run iterative passes until the hit ratio settles (< 1% variation between consecutive passes).
+   - For official benchmark campaigns, run multiple independent trials (`TRIALS=3` or `TRIALS=5`) recreating the Kubernetes pods (`origin`, `pgcache`, `loadgen`) between trials via `reset_all_pods` (without recreating the K8s cluster) to capture positive/negative deviation bounds (`-Δ/+Δ`) and standard deviation (`stddev`), eliminating single-run anomalies.
 4. **Writes and DDL Exclusively on Origin**:
    - All schema migrations, setup scripts (`00-setup.sh`), seeds, and maintenance writes must target the origin (`$ORIGIN_HOST`) directly, never PgCache.
 5. **PgCache Environment Variables (`ALLOWED_TABLES`, `MEMO_CACHE_SIZE`, & `MEMORY_LIMIT`)**:
@@ -38,9 +40,9 @@ This repository contains a rigorous, reproducible benchmark comparing PostgreSQL
    - NEVER set hard CPU limits (`resources.limits.cpu`), as CFS throttling introduces p99 latency spikes indistinguishable from cache misses.
    - When using DigitalOcean Kubernetes (DOKS), provision via `./scripts/do-cluster.sh create` and tear down cluster + CSI block volumes via `./scripts/do-cluster.sh destroy` immediately after collecting artifacts to prevent idle cloud billing.
    - When using Azure Kubernetes Service (AKS), provision the ultra-low-cost Free-tier + 3-node Single-AZ Spot stack (`infra/terraform/aks/`) via `./scripts/aks-cluster.sh create`, deploy via `./scripts/aks-cluster.sh deploy 0.7.1`, and tear down cluster + Resource Group via `./scripts/aks-cluster.sh destroy` immediately after collecting artifacts.
-2. **Docker Compose (`infra/docker-compose.yml`)**:
-   - Used for local multi-version verification (`pgcache/pgcache:0.7.1-arm64` on Apple Silicon / `0.7.1` on x86_64), differential correctness gating, and complex workload evaluation.
-   - Local Docker shares host CPU cores and has near-zero loopback latency; always document Docker results separately from 3-node Kubernetes (DOKS) results.
+2. **Docker Compose (`infra/docker-compose.yml`) — Setup & Correctness Testing Only**:
+   - Local Docker MUST be used **exclusively** to assemble the environment locally, test SQL schema/seeds (`00-setup.sh`), and run the functional/differential correctness gate (`./scripts/run-tag-verification.sh --smoke-docker` or `DOCKER=1 ./scripts/verify-correctness.sh`).
+   - **NEVER** include or publish local Docker performance numbers in benchmark result tables (`README.md`, `README-pt.md`, `results/`). Because local Docker shares host CPU cores and has near-zero loopback latency, all official benchmark performance results MUST come strictly from the 3-node Kubernetes topology (DOKS / AKS).
 
 ## 4. Dataset Sizing and Scale Factors
 

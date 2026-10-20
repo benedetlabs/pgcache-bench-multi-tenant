@@ -49,56 +49,66 @@ TENANTS=2000 ./scripts/00-setup.sh
 SCALE=5 ./scripts/00-setup.sh
 ```
 
-## 3. Differential Correctness & Cacheability Gate
+## 3. Differential Correctness, Cacheability & Post-CDC Gate
 
 Before running long benchmark sweeps, always run the correctness & cacheability gate (maintained by `pgcache-complex-scenarios`):
 
 ```bash
-DOCKER=1 ./scripts/verify-correctness.sh
+# In 3-node Kubernetes (Official Benchmark Environment):
+./scripts/verify-correctness.sh
+
+# In Local Docker (Environment Setup & Functional Smoke Test Only):
+./scripts/run-tag-verification.sh --smoke-docker 0.7.1
 ```
 
-This verifies across all 12 complex queries and 3 passes that:
-1. Every complex query returns byte-for-byte identical rows from Origin and PgCache (on initial miss, base-table hit, and warm Materialized View hit).
+This verifies across all 8 baseline queries, all 12 static complex queries (3 passes), and all 12 Post-CDC live mutation queries (Pass 4) that:
+1. Every query returns byte-for-byte identical rows from Origin and PgCache (on initial miss, base-table hit, warm Materialized View hit, and after live CDC `UPDATE` mutations on `orders` and `order_item`).
 2. `pgcache_queries_uncacheable` delta is `0`, `pgcache_queries_cache_error` delta is `0`, `pgcache_cache_mv_gate{outcome="admit"}` is `12` (`reject == 0`), and `pgcache_cache_mv_hits` delta is `12`.
 
-## 4. Running Benchmark Sweeps
+## 4. Running Official Multi-Trial Benchmark Sweeps (3-Node Kubernetes Exclusively)
 
-### A. Automated Full Tag Verification (Local Docker)
-Runs baseline sweeps (`01`–`03`) plus complex multi-tenant sweeps (`04`) and saves all artifacts under `results/<tag>/`:
+> **Environment Policy**: Local Docker (`infra/docker-compose.yml`) is used **only** for assembling the environment and running functional/correctness checks. Official performance results MUST be collected exclusively on the 3-node Kubernetes cluster (`BENCH_ENV=k8s`) using multiple trials (`TRIALS=3` or `TRIALS=5`) with full pod recreation (`reset_all_pods`) between trials to capture positive and negative deviation (`-Δ/+Δ` and `stddev`).
+
+### A. Automated Full Multi-Trial Tag Campaign (3-Node K8s)
+Runs baseline sweeps (`01`–`03`) plus complex multi-tenant sweeps (`04`) across `TRIALS` independent runs (recreating `origin`, `pgcache`, and `loadgen` pods between trials) and saves all artifacts under `results/<tag>/`:
 
 ```bash
-./scripts/run-tag-verification.sh 0.7.1 5
+# Run 5 trials (30s per cell, recreating origin + pgcache + loadgen pods per trial) on 3-node Kubernetes:
+./scripts/run-tag-verification.sh 0.7.1 30 5
 ```
 
 ### B. Individual Baseline Sweeps (`workload/dashboard.sql` & `workload/write.sql`)
 1. **Sweep 1: Tenant Count Sweep**:
    ```bash
-   ./scripts/01-tenant-sweep.sh | tee data/run-tenants.txt
+   TRIALS=3 ./scripts/01-tenant-sweep.sh | tee data/run-tenants.txt
    ```
 2. **Sweep 2: Client Concurrency Sweep**:
    ```bash
-   ./scripts/02-concurrency-sweep.sh | tee data/run-clients.txt
+   TRIALS=3 ./scripts/02-concurrency-sweep.sh | tee data/run-clients.txt
    ```
 3. **Sweep 3: Write Ratio and Concentration Sweep**:
    ```bash
-   ./scripts/03-write-sweep.sh | tee data/run-writes.txt
+   TRIALS=3 ./scripts/03-write-sweep.sh | tee data/run-writes.txt
    ```
 
 ### C. Complex Multi-Tenant Sweeps (`scripts/04-complex-sweep.sh`)
-Evaluates text search (`complex-search.sql`), 4–6 table `JOIN` & `LEFT JOIN` chains (`complex-joins.sql`), heavy analytical aggregations (`complex-analytics.sql`), and the unified 8-statement complex screen (`complex-dashboard.sql`):
+Evaluates text search (`complex-search.sql`), 4–6 table `JOIN` & `LEFT JOIN` chains (`complex-joins.sql`), heavy analytical aggregations (`complex-analytics.sql`), and the unified 8-statement complex screen (`complex-dashboard.sql` uniform and `complex-dashboard-zipfian.sql` Pareto 80/20):
 
 ```bash
-# Compare all 5 scenario families side-by-side:
-DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh scenarios
+# Compare all 5 scenario families side-by-side (3 trials on K8s):
+TRIALS=3 TENANTS=200 ./scripts/04-complex-sweep.sh scenarios
 
-# Sweep active tenants (1..1000) on complex-dashboard.sql:
-DOCKER=1 ./scripts/04-complex-sweep.sh tenants
+# Sweep active tenants (1..1000 uniform) on complex-dashboard.sql:
+TRIALS=3 ./scripts/04-complex-sweep.sh tenants
+
+# Sweep active tenants (100..2000 Pareto/Zipfian 80-20) on complex-dashboard-zipfian.sql:
+TRIALS=3 ./scripts/04-complex-sweep.sh zipfian
 
 # Sweep client concurrency (1..32) on complex-dashboard.sql:
-DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh clients
+TRIALS=3 TENANTS=200 ./scripts/04-complex-sweep.sh clients
 
 # Sweep write ratios (0%, 5%, 10%) on complex-dashboard.sql:
-DOCKER=1 TENANTS=200 ./scripts/04-complex-sweep.sh writes
+TRIALS=3 TENANTS=200 ./scripts/04-complex-sweep.sh writes
 ```
 
 ## 5. Non-Destructive Results & Cloud Lifecycle Hygiene

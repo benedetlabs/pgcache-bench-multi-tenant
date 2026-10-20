@@ -35,6 +35,12 @@ CREATE INDEX IF NOT EXISTS orders_tenant_created ON orders(tenant_id, created_at
 CREATE INDEX IF NOT EXISTS orders_tenant_status  ON orders(tenant_id, status);
 CREATE INDEX IF NOT EXISTS oitem_tenant_product  ON order_item(tenant_id, product_id);
 
+-- Ensure sequences for live INSERT workloads are attached
+CREATE SEQUENCE IF NOT EXISTS orders_id_seq START WITH 100000000;
+CREATE SEQUENCE IF NOT EXISTS order_item_id_seq START WITH 100000000;
+ALTER TABLE orders ALTER COLUMN id SET DEFAULT nextval('orders_id_seq');
+ALTER TABLE order_item ALTER COLUMN id SET DEFAULT nextval('order_item_id_seq');
+
 ANALYZE orders;
 ANALYZE order_item;
 

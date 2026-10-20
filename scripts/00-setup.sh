@@ -52,6 +52,8 @@ if [ "$BENCH_ENV" = "docker" ]; then
 
   if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_TENANTS" -eq "$TENANTS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
     echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders, $CURRENT_TENANTS tenants) ---"
+    docker compose -f "$REPO_ROOT/infra/docker-compose.yml" exec -T client \
+      bash -c "psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -q -c \"CREATE SEQUENCE IF NOT EXISTS orders_id_seq START WITH 100000000; CREATE SEQUENCE IF NOT EXISTS order_item_id_seq START WITH 100000000; ALTER TABLE orders ALTER COLUMN id SET DEFAULT nextval('orders_id_seq'); ALTER TABLE order_item ALTER COLUMN id SET DEFAULT nextval('order_item_id_seq'); DELETE FROM order_item WHERE id >= 100000000; DELETE FROM orders WHERE id >= 100000000;\""
   else
     echo "--- Seeding database (Current: $CURRENT_ORDERS orders / $CURRENT_TENANTS tenants, Target: $EXPECTED_ORDERS orders / $TENANTS tenants) ---"
     for f in 01-schema 02-tenant; do
@@ -88,6 +90,9 @@ else
 
   if [ "$FORCE" != "1" ] && [ "$CURRENT_ORDERS" -eq "$EXPECTED_ORDERS" ] && [ "$CURRENT_TENANTS" -eq "$TENANTS" ] && [ "$CURRENT_ORDERS" -gt 0 ]; then
     echo "--- Database already seeded with SCALE=$SCALE ($CURRENT_ORDERS orders, $CURRENT_TENANTS tenants) ---"
+    kubectl -n "$NS" exec deploy/loadgen -- \
+      bash -c "[ -f /etc/profile.d/benchmark-hosts.sh ] && . /etc/profile.d/benchmark-hosts.sh; \
+      psql -h \$ORIGIN_HOST -U \$PGUSER -d \$PGDATABASE -q -c \"CREATE SEQUENCE IF NOT EXISTS orders_id_seq START WITH 100000000; CREATE SEQUENCE IF NOT EXISTS order_item_id_seq START WITH 100000000; ALTER TABLE orders ALTER COLUMN id SET DEFAULT nextval('orders_id_seq'); ALTER TABLE order_item ALTER COLUMN id SET DEFAULT nextval('order_item_id_seq'); DELETE FROM order_item WHERE id >= 100000000; DELETE FROM orders WHERE id >= 100000000;\""
   else
     echo "--- Seeding database in Kubernetes (Current: $CURRENT_ORDERS orders / $CURRENT_TENANTS tenants, Target: $EXPECTED_ORDERS orders / $TENANTS tenants) ---"
     for f in 01-schema 02-tenant; do
@@ -101,7 +106,7 @@ else
 
   echo "--- copying workload scripts ---"
   kubectl -n "$NS" exec deploy/loadgen -- bash -c 'mkdir -p /tmp/mt'
-  for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard; do
+  for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian; do
     if [ -f "$HERE/../workload/$f.sql" ]; then
       kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$HERE/../workload/$f.sql"
     fi

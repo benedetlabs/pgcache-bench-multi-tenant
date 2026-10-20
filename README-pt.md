@@ -56,14 +56,14 @@ Escrito para quem nunca viu isto antes; nada assume contexto prévio.
 
 **O resultado, em uma linha:** o cache respondeu um dashboard de oito statements
 entre **6,4× e 12,6× mais rápido** que o banco sem cache (e **14× a 31× mais
-rápido no DOKS de 3 nós** / **41× a 97× mais rápido no Docker local** em cargas
-complexas de 4 a 6 tabelas aceleradas por Materialized Views no PgCache `0.7.1`),
-com **100% de taxa de acerto** em cargas de leitura estabilizadas.
+rápido no DOKS de 3 nós** em cargas complexas de 4 a 6 tabelas aceleradas por
+Materialized Views no PgCache `0.7.1`), com **100% de taxa de acerto** em cargas
+de leitura estabilizadas.
 
 A seção 16 é onde esse número deve parar de ser esticado. Enquanto a campanha
 original publicou sem um gate de correção diferencial, [`scripts/verify-correctness.sh`](scripts/verify-correctness.sh)
-agora valida igualdade byte a byte de saída (`Origin == PgCache`), `pgcache_queries_uncacheable == 0`
-e admissão + hits no gate de Materialized Views em todas as 12 consultas complexas (`results/0.7.1/verify-correctness-doks.txt` e `results/0.7.1/verify-correctness.txt`).
+agora valida igualdade byte a byte de saída (`Origin == PgCache`), `pgcache_queries_uncacheable == 0`,
+admissão + hits no gate de Materialized Views e verificação Pós-CDC após mutação ao vivo em todas as consultas baseline e complexas (`results/0.7.1/verify-correctness-doks.txt`).
 
 O cache testado é o [PgCache](https://www.pgcache.com). Nada aqui tem vínculo com
 ele — é uma medição independente, inclusive nas partes desfavoráveis.
@@ -147,14 +147,20 @@ helm install pgcache-mt infra/helm/pgcache-mt \
 ./scripts/do-cluster.sh destroy
 ```
 
-### Resultados de múltiplas versões e verificação local no Docker
+### Resultados de múltiplas versões e verificação multi-trial por tag
 
-Os resultados de verificação do benchmark estruturados por tag de versão (`0.6.3`, `0.6.4`, `0.7.0` e `0.7.1`) estão disponíveis na pasta [`results/`](results/) com relatórios dedicados em inglês e português.
+Os resultados oficiais de verificação do benchmark estruturados por tag de versão (`0.6.3`, `0.6.4`, `0.7.0` e `0.7.1`) estão disponíveis na pasta [`results/`](results/) com relatórios dedicados em inglês e português.
 
-Para rodar a verificação local no Docker para qualquer tag:
+Para rodar uma campanha oficial multi-trial (padrão: 5 rodadas com recriação completa dos pods `origin + pgcache + loadgen` entre rodadas) em um cluster Kubernetes de 3 nós:
 
 ```bash
-./scripts/run-tag-verification.sh 0.7.1 5
+./scripts/run-tag-verification.sh 0.7.1 30 5
+```
+
+Para montar o ambiente localmente no Docker e rodar apenas o gate funcional e de corretude diferencial (nenhum número de performance é gravado a partir do Docker):
+
+```bash
+./scripts/run-tag-verification.sh --smoke-docker 0.7.1
 ```
 
 ---
@@ -1097,41 +1103,41 @@ daquela tabela. **A consulta mais barata é o pior caso de um cache.**
 
 Para testar o corolário dessa regra — o que acontece quando um SaaS multi-tenant
 executa telas relacionais genuinamente pesadas — expandimos o benchmark com quatro
-suítes de carga complexa avaliadas no **PgCache `0.7.1`** tanto em **DigitalOcean Kubernetes de 3 Nós (DOKS)** quanto em **Docker Local**:
+suítes de carga complexa avaliadas no **PgCache `0.7.1`** em **DigitalOcean Kubernetes de 3 Nós (DOKS)**:
 
 1. **Busca Textual por Substring (`complex-search.sql`)**: 4 statements combinando buscas `ILIKE '%...%'` em e-mails/nomes de clientes, nomes de produtos, vendedores e textos de avaliações com cadeias de `INNER JOIN` e `LEFT JOIN` de 2 a 4 tabelas.
 2. **Joins Profundos Multi-Tabela (`complex-joins.sql`)**: 4 statements percorrendo cadeias de 4 a 6 tabelas com `INNER JOIN` e `LEFT JOIN` (`orders -> customer -> order_item -> product -> category -> seller -> review`), preservando coortes de clientes sem pedidos (`LEFT JOIN orders`) e estoque de produtos sem avaliação (`LEFT JOIN review`).
 3. **Análises Multidimensionais (`complex-analytics.sql`)**: 4 statements executando `GROUP BY` multicoluna, `FILTER (WHERE ...)` condicional, faixas `CASE WHEN` de atendimento e preço, e filtros pós-agregação `HAVING`.
 4. **Tela Analítica e de Busca Unificada (`complex-dashboard.sql`)**: Tela corporativa de 8 statements combinando 2 consultas de busca textual, 3 joins profundos multi-tabela (`JOIN` / `LEFT JOIN`) e 3 agregações analíticas pesadas.
 
-#### Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8` — DOKS 3 Nós vs. Docker Local)
+#### Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8` — DOKS 3 Nós)
 
-| Cenário | Statements | Origem DOKS | PgCache 0.7.1 DOKS | Ganho DOKS (Aceleração) | Origem Docker | PgCache 0.7.1 Docker | Ganho Docker (Aceleração) | Hit Ratio |
-|---|---:|---|---|---:|---|---|---:|---:|
-| **`dash_base`** (`dashboard.sql`) | 8 | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **+45% (1,45×)** | 37,61 ms · 213 rps | **16,05 ms · 498 rps** | **+134% (2,3×)** | 100,0% |
-| **`search`** (`complex-search.sql`) | 4 | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **+1.369% (14,7×)** | 88,67 ms · 90 rps | **1,53 ms · 5.223 rps** | **+5.703% (58,0×)** | 100,0% |
-| **`joins`** (`complex-joins.sql`) | 4 | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **+3.033% (31,3×)** | 121,46 ms · 66 rps | **1,25 ms · 6.426 rps** | **+9.636% (97,4×)** | 100,0% |
-| **`analytics`** (`complex-analytics.sql`) | 4 | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **+1.703% (18,0×)** | 92,31 ms · 87 rps | **1,39 ms · 5.737 rps** | **+6.494% (65,9×)** | 100,0% |
-| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **+1.685% (17,8×)** | 209,62 ms · 38 rps | **2,86 ms · 2.798 rps** | **+7.263% (73,6×)** | 100,0% |
+| Cenário | Statements | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
+|---|---:|---|---|---:|---:|---:|
+| **`dash_base`** (`dashboard.sql`) | 8 | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **+45% (1,45×)** | 100,0% | 2 |
+| **`search`** (`complex-search.sql`) | 4 | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **+1.369% (14,7×)** | 100,0% | 3 |
+| **`joins`** (`complex-joins.sql`) | 4 | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **+3.033% (31,3×)** | 100,0% | 3 |
+| **`analytics`** (`complex-analytics.sql`) | 4 | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **+1.703% (18,0×)** | 100,0% | 4 |
+| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **+1.685% (17,8×)** | 100,0% | 5 |
 
-#### Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200` — DOKS 3 Nós vs. Docker Local)
+#### Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200` — DOKS 3 Nós)
 
-| Clientes | Origem DOKS | PgCache 0.7.1 DOKS | Ganho DOKS (Aceleração) | Origem Docker | PgCache 0.7.1 Docker | Ganho Docker (Aceleração) | Hit Ratio | Passos Warmup |
-|---:|---|---|---:|---|---|---:|---:|---:|
-| **1** | 100,60 ms · 10 rps | **7,14 ms · 140 rps** | **+1.300% (14,0×)** | 84,83 ms · 12 rps | **1,73 ms · 578 rps** | **+4.717% (48,2×)** | 100,0% | 2 |
-| **4** | 129,45 ms · 31 rps | **8,60 ms · 465 rps** | **+1.400% (15,0×)** | 92,22 ms · 43 rps | **2,26 ms · 1.770 rps** | **+4.016% (41,2×)** | 100,0% | 2 |
-| **8** | 212,81 ms · 38 rps | **10,48 ms · 763 rps** | **+1.908% (20,1×)** | 194,69 ms · 41 rps | **2,66 ms · 3.003 rps** | **+7.224% (73,2×)** | 100,0% | 2 |
-| **16** | 406,90 ms · 39 rps | **18,06 ms · 886 rps** | **+2.172% (22,7×)** | 400,89 ms · 40 rps | **4,60 ms · 3.475 rps** | **+8.588% (86,9×)** | 100,0% | 2 |
-| **32** | 835,52 ms · 38 rps | **31,36 ms · 1.020 rps** | **+2.584% (26,8×)** | 862,44 ms · 37 rps | **9,20 ms · 3.478 rps** | **+9.300% (94,0×)** | 100,0% | 2 |
+| Clientes | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---:|---:|
+| **1** | 100,60 ms · 10 rps | **7,14 ms · 140 rps** | **+1.300% (14,0×)** | 100,0% | 2 |
+| **4** | 129,45 ms · 31 rps | **8,60 ms · 465 rps** | **+1.400% (15,0×)** | 100,0% | 2 |
+| **8** | 212,81 ms · 38 rps | **10,48 ms · 763 rps** | **+1.908% (20,1×)** | 100,0% | 2 |
+| **16** | 406,90 ms · 39 rps | **18,06 ms · 886 rps** | **+2.172% (22,7×)** | 100,0% | 2 |
+| **32** | 835,52 ms · 38 rps | **31,36 ms · 1.020 rps** | **+2.584% (26,8×)** | 100,0% | 2 |
 
 #### Duas Descobertas Arquiteturais das Varreduras Complexas
 
 1. **Cache em Dois Estágios no PgCache `0.7.1` (Subsunção de Tabelas vs. Gate de Admissão de Materialized Views)**:
-   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`15,92 ms` vs `23,06 ms` no DOKS, **1,45× mais rápido**; `16,05 ms` vs `37,61 ms` no Docker, **2,3× mais rápido**).
-   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes via `pgcache_cache_mv_hits` em **~1,18–1,44 ms por statement entre nós físicos no DOKS** (`11,50 ms` para 8 statements contra `204,39 ms` na Origem — **17,8× mais rápido** com 8 clientes, **26,8× mais rápido** com 32 clientes e **31,3× mais rápido** em `complex-joins.sql`) e **~0,31–0,38 ms por statement no Docker Local** (`2,86 ms` vs `209,62 ms` — **73,6× mais rápido** com 8 clientes e **94,0× mais rápido** com 32 clientes).
+   - Em `dashboard.sql` (`dash_base`), as consultas rodam sobre as tabelas-base populadas (`public.*`) no PostgreSQL embutido do PgCache (`15,92 ms` vs `23,06 ms` no DOKS, **1,45× mais rápido**).
+   - Em `complex-*.sql`, as consultas passam pelo **Gate de Admissão de Materialized Views** do PgCache (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`: `OFFSET 0`, chaves `GROUP BY` de entidade não-nulas e linhas pré-agregação `>= 1.000` ou razão de redução `>= 10:1`). O PgCache pré-computa o resultado de cada join/agregação/busca de 4 a 6 tabelas em `pgcache_mv.q_<hash>` e serve os hits seguintes via `pgcache_cache_mv_hits` em **~1,18–1,44 ms por statement entre nós físicos no DOKS** (`11,50 ms` para 8 statements contra `204,39 ms` na Origem — **17,8× mais rápido** com 8 clientes, **26,8× mais rápido** com 32 clientes e **31,3× mais rápido** em `complex-joins.sql`).
 2. **Onde as Materialized Views Complexas Encontram Seus Limites (Escala no Cold-Start e `INNER JOIN` vs `LEFT JOIN` sob Escrita)**:
-   - **Escala do Working Set no Cold-Start**: No DOKS de 3 nós, o PgCache aquece **100,0% do working set de 1 a 500 tenants (`4.000` consultas complexas)** (`+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants). Em 1.000 tenants (`8.000` consultas complexas), a amostragem uniforme combinada ao custo de população fria por tenant aquece `68,1%` no DOKS (`62,7%` no Docker) dentro da janela limitada de 8 passes (15s).
-   - **CDC In-Place em `INNER JOIN` vs. Invalidação Conservadora em `LEFT JOIN` sob Escrita**: Quando `UPDATE orders` roda em proporções de 5%–10% de escritas, as **5 consultas `INNER JOIN` (`62,5%`)** em `complex-dashboard.sql` (que possuem predicados explícitos `WHERE ... AND o.tenant_id = :t`) aplicam atualizações in-place via CDC (`cdc_update`) e rebuilds de MV em background (`pgcache_cache_mv_rebuilds`), permanecendo **100% cache hits**. Já as **3 consultas `LEFT JOIN` (`37,5%`)** (onde `o.tenant_id = :t` reside na cláusula `ON` do outer join para preservar clientes sem pedidos) sofrem invalidação conservadora em escritas na tabela `orders`, estabilizando o hit ratio geral em **63,1%–75,0% no DOKS** (`62,5%–67,6%` no Docker). Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
+   - **Escala do Working Set no Cold-Start**: No DOKS de 3 nós, o PgCache aquece **100,0% do working set de 1 a 500 tenants (`4.000` consultas complexas)** (`+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants). Em 1.000 tenants (`8.000` consultas complexas), a amostragem uniforme combinada ao custo de população fria por tenant aquece `68,1%` no DOKS dentro da janela limitada de 8 passes (15s).
+   - **CDC In-Place em `INNER JOIN` vs. Invalidação Conservadora em `LEFT JOIN` sob Escrita**: Quando `UPDATE orders` roda em proporções de 5%–10% de escritas, as **5 consultas `INNER JOIN` (`62,5%`)** em `complex-dashboard.sql` (que possuem predicados explícitos `WHERE ... AND o.tenant_id = :t`) aplicam atualizações in-place via CDC (`cdc_update`) e rebuilds de MV em background (`pgcache_cache_mv_rebuilds`), permanecendo **100% cache hits**. Já as **3 consultas `LEFT JOIN` (`37,5%`)** (onde `o.tenant_id = :t` reside na cláusula `ON` do outer join para preservar clientes sem pedidos) sofrem invalidação conservadora em escritas na tabela `orders`, estabilizando o hit ratio geral em **63,1%–75,0% no DOKS**. Veja [`results/0.7.1/README-pt.md`](results/0.7.1/README-pt.md) para o detalhamento completo.
 
 ### 15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)
 

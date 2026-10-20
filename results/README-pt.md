@@ -1,21 +1,22 @@
-# Resultados da Verificação Multi-Versão do PgCache
+# Resultados da Verificação Multi-Versão do PgCache (Kubernetes 3 Nós / DOKS)
 
 > 🇺🇸 **[English version](README.md)**
 
-Este diretório contém os resultados das execuções de benchmark comparando versões do **PgCache** em dois ambientes distintos e dois níveis de complexidade de carga:
+Este diretório contém as execuções oficiais de verificação de benchmark comparando versões do **PgCache** em **DigitalOcean Kubernetes de 3 Nós (DOKS)** e dois níveis de complexidade de carga:
 - [**PgCache 0.6.3**](0.6.3/README-pt.md)
 - [**PgCache 0.6.4**](0.6.4/README-pt.md)
 - [**PgCache 0.7.0**](0.7.0/README-pt.md)
 - [**PgCache 0.7.1 (Baseline + Cenários Complexos Multi-Tenant)**](0.7.1/README-pt.md)
+- [**Sweep 5: Endurance de 1h30m e Alívio de Recursos na Origem (`SCALE=20`)**](endurance-90m/README-pt.md)
 - [**Perfil Otimizado / Tuned (v0.7.0)**](tuned/README-pt.md)
 
-Ambos os ambientes seguem rigorosamente o protocolo do benchmark (protocolo de consulta simples `-M simple`, sem transações explícitas `BEGIN...COMMIT`, aquecimento dinâmico estabilizado `< 1%` e `pgcache_queries_uncacheable == 0`).
+> **Política de Ambiente**: Todos os resultados oficiais de performance são coletados **exclusivamente em clusters Kubernetes de 3 nós (DOKS)** com `podAntiAffinity` estrito (`origin`, `pgcache` e `loadgen` em três nós físicos separados). O Docker Compose local (`infra/docker-compose.yml`) é utilizado estritamente para montagem do ambiente e testes funcionais/corretude diferencial (`scripts/verify-correctness.sh`).
 
 ---
 
 ## 1. DigitalOcean Kubernetes (DOKS 3 Nós — 1 a 2.000 Tenants)
 
-Executado em um cluster de produção de baixo custo: 3 nós dedicados (`s-4vcpu-8gb`, `sfo3` single-AZ), `--ha=false`, `podAntiAffinity` estrito (1 nó exclusivo para cada: origin, pgcache, loadgen) e `hostNetwork: true`.
+Executado em um cluster com topologia de produção: 3 nós dedicados (`s-4vcpu-8gb`, single-AZ), `--ha=false`, `podAntiAffinity` estrito (1 nó exclusivo para cada: `origin`, `pgcache`, `loadgen`) e `hostNetwork: true`.
 
 ### 1.1 Varredura Multi-Versão Baseline (1 a 2.000 Tenants)
 
@@ -45,112 +46,53 @@ Comparando a configuração padrão do DOKS com o perfil otimizado (`tcp_slow_st
 
 ---
 
-## 2. Ambiente Local Docker (Linha de Base — 1 a 1.000 Tenants)
+## 2. Cenários Complexos Multi-Tenant no DOKS 3 Nós (PgCache 0.7.1 — Aceleração via Materialized Views)
 
-Executado em ambiente Docker local em máquina de desenvolvimento com rede de host único e núcleos compartilhados:
-
-### Comparativo nos Eixos de Carga (`workload/dashboard.sql`)
-
-| Métrica / Cenário | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | PgCache 0.7.1 |
-|---|---|---|---|---|---|
-| **Hit Ratio (Todas as Células)** | N/A | **100,0%** | **100,0%** | **100,0%** (1..500t) / **99,7%** (1.000t) | **100,0%** (1..500t) / **99,9%** (1.000t) |
-| **Latência com 1 Cliente** | 10,5–13,3 ms | **5,53 ms** (2,0× mais rápido) | **5,15 ms** (2,1× mais rápido) | **5,55 ms** (2,1× mais rápido) | **6,89 ms** (1,9× mais rápido) |
-| **Latência com 8 Clientes (Leitura)** | 35,4–40,1 ms | **14,62 ms** (+142%) | **15,34 ms** (+149%) | **14,90 ms** (+145%) | **16,75 ms** (+131%) |
-| **Vazão Máxima (32 clientes)** | 249–307 rps | **711 rps** (+138%) | **748 rps** (+144%) | **626 rps** (+111%) | **593 rps** (+138%) |
-| **Resiliência a Escritas (5% w, 1 wt)** | 217–249 rps | **575 rps** (+141%) | **598 rps** (+140%) | **408 rps** (+66%) | **456 rps** (+110%) |
-| **Resiliência a Escritas (10% w, 1000 wt)** | 220–268 rps | **603 rps** (+140%) | **631 rps** (+135%) | **318 rps** (+24%) | **308 rps** (+40%) |
-
-### Varredura de Tenants (Linha de Base Docker)
-
-| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 | PgCache 0.6.4 | PgCache 0.7.0 | PgCache 0.7.1 | Hit Ratio | Passos de Aquecimento |
-|---|---|---|---|---|---|---|---|
-| **1 Tenant** | 33,9–46,1 ms (174–236 rps) | **13,4 ms** (596 rps, +153%) | **13,2 ms** (604 rps, +161%) | **14,0 ms** (572 rps, +229%) | **15,6 ms** (514 rps, +138%) | **100,0%** | 2–3 |
-| **10 Tenants** | 32,6–36,1 ms (222–246 rps) | **13,6 ms** (590 rps, +140%) | **15,1 ms** (530 rps, +122%) | **14,1 ms** (567 rps, +137%) | **16,1 ms** (496 rps, +123%) | **100,0%** | 2 |
-| **50 Tenants** | 32,5–37,2 ms (215–246 rps) | **13,8 ms** (578 rps, +144%) | **14,0 ms** (572 rps, +150%) | **15,1 ms** (529 rps, +115%) | **17,2 ms** (465 rps, +116%) | **100,0%** | 3 |
-| **200 Tenants** | 33,2–40,1 ms (199–241 rps) | **14,0 ms** (570 rps, +147%) | **14,0 ms** (572 rps, +137%) | **15,4 ms** (521 rps, +141%) | **16,9 ms** (475 rps, +139%) | **100,0%** | 3 |
-| **500 Tenants** | 33,7–40,5 ms (198–238 rps) | **14,2 ms** (563 rps, +144%) | **14,3 ms** (559 rps, +135%) | **16,1 ms** (496 rps, +126%) | **17,8 ms** (450 rps, +127%) | **100,0%** | 4 |
-| **1.000 Tenants** | 33,6–40,9 ms (196–238 rps) | **14,3 ms** (559 rps, +143%) | **14,5 ms** (551 rps, +132%) | **15,7 ms** (510 rps, +130%) | **17,7 ms** (451 rps, +130%) | **99,7%–100,0%** | 5 |
-
----
-
-## 3. Cenários Complexos Multi-Tenant (PgCache 0.7.1 — Aceleração via Materialized Views)
-
-No **PgCache 0.7.1**, expandimos o benchmark além de consultas operacionais leves (`workload/dashboard.sql`) para quatro **cargas corporativas SaaS complexas** (`scripts/04-complex-sweep.sh`) tanto em **DigitalOcean Kubernetes de 3 Nós (DOKS)** quanto em **Docker Local**, e aplicamos um rigoroso **Gate Diferencial de Correção, Cacheabilidade e Admissão de MVs** (`scripts/verify-correctness.sh`):
-- **12/12 consultas complexas** verificadas byte a byte idênticas entre Origem e PgCache em 3 passes tanto no DOKS de 3 nós (`verify-correctness-doks.txt`, `TENANTS=2000`) quanto no Docker Local (`verify-correctness.txt`, `TENANTS=1000`).
+No **PgCache 0.7.1**, expandimos o benchmark além de consultas operacionais leves (`workload/dashboard.sql`) para quatro **cargas corporativas SaaS complexas** (`scripts/04-complex-sweep.sh`) em **DigitalOcean Kubernetes de 3 Nós (DOKS)**, e aplicamos um rigoroso **Gate Diferencial de Correção, Cacheabilidade, Admissão de MVs e Pós-CDC** (`scripts/verify-correctness.sh`):
+- **12/12 consultas complexas** verificadas byte a byte idênticas entre Origem e PgCache nos 3 passes estáticos (`verify-correctness-doks.txt`, `TENANTS=2000`) e após mutações CDC ao vivo.
 - **100% de cacheabilidade** (`pgcache_queries_uncacheable == 0`), **100% de admissão no Gate de Materialized Views** (`pgcache_cache_mv_gate{outcome="admit"} == 12/12`, `reject == 0`) e **100% de hit em MVs no Passe 3** (delta de `pgcache_cache_mv_hits == 12/12`).
 
-### 3.1 Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8` — DOKS 3 Nós vs. Docker Local)
+### 2.1 Comparativo por Complexidade de Carga (`TENANTS=200`, `CLIENTS=8` — DOKS 3 Nós)
 
-| Cenário | Carga SQL | Origem DOKS | PgCache 0.7.1 DOKS | Ganho DOKS (Aceleração) | Origem Docker | PgCache 0.7.1 Docker | Ganho Docker (Aceleração) | Hit Ratio |
-|---|---|---|---|---:|---|---|---:|---:|
-| **`dash_base`** | [`dashboard.sql`](../workload/dashboard.sql) (8 consultas operacionais simples) | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **+45% (1,45×)** | 37,61 ms · 213 rps | **16,05 ms · 498 rps** | **+134% (2,3×)** | 100,0% |
-| **`search`** | [`complex-search.sql`](../workload/complex-search.sql) (4 buscas `ILIKE '%...%'` + `JOIN`/`LEFT JOIN`) | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **+1.369% (14,7×)** | 88,67 ms · 90 rps | **1,53 ms · 5.223 rps** | **+5.703% (58,0×)** | 100,0% |
-| **`joins`** | [`complex-joins.sql`](../workload/complex-joins.sql) (4 cadeias de 4 a 6 tabelas com `JOIN` e `LEFT JOIN`) | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **+3.033% (31,3×)** | 121,46 ms · 66 rps | **1,25 ms · 6.426 rps** | **+9.636% (97,4×)** | 100,0% |
-| **`analytics`** | [`complex-analytics.sql`](../workload/complex-analytics.sql) (4 agregações `GROUP BY` + `FILTER` + `CASE` + `HAVING`) | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **+1.703% (18,0×)** | 92,31 ms · 87 rps | **1,39 ms · 5.737 rps** | **+6.494% (65,9×)** | 100,0% |
-| **`cplx_dash`** | [`complex-dashboard.sql`](../workload/complex-dashboard.sql) (Tela unificada com 8 statements corporativos) | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **+1.685% (17,8×)** | 209,62 ms · 38 rps | **2,86 ms · 2.798 rps** | **+7.263% (73,6×)** | 100,0% |
+| Cenário | Carga SQL | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
+|---|---|---|---|---:|---:|---:|
+| **`dash_base`** | [`dashboard.sql`](../workload/dashboard.sql) (8 consultas operacionais simples) | 23,06 ms · 347 rps | **15,92 ms · 503 rps** | **+45% (1,45×)** | 100,0% | 2 |
+| **`search`** | [`complex-search.sql`](../workload/complex-search.sql) (4 buscas `ILIKE '%...%'` + `JOIN`/`LEFT JOIN`) | 74,26 ms · 108 rps | **5,04 ms · 1.586 rps** | **+1.369% (14,7×)** | 100,0% | 3 |
+| **`joins`** | [`complex-joins.sql`](../workload/complex-joins.sql) (4 cadeias de 4 a 6 tabelas com `JOIN` e `LEFT JOIN`) | 148,87 ms · 54 rps | **4,73 ms · 1.692 rps** | **+3.033% (31,3×)** | 100,0% | 3 |
+| **`analytics`** | [`complex-analytics.sql`](../workload/complex-analytics.sql) (4 agregações `GROUP BY` + `FILTER` + `CASE` + `HAVING`) | 102,38 ms · 78 rps | **5,69 ms · 1.406 rps** | **+1.703% (18,0×)** | 100,0% | 4 |
+| **`cplx_dash`** | [`complex-dashboard.sql`](../workload/complex-dashboard.sql) (Tela unificada com 8 statements corporativos) | 204,39 ms · 39 rps | **11,50 ms · 696 rps** | **+1.685% (17,8×)** | 100,0% | 5 |
 
-### 3.2 Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200` — DOKS 3 Nós vs. Docker Local)
+### 2.2 Escala de Concorrência em `complex-dashboard.sql` (`TENANTS=200` — DOKS 3 Nós)
 
-| Clientes | Origem DOKS | PgCache 0.7.1 DOKS | Ganho DOKS (Aceleração) | Origem Docker | PgCache 0.7.1 Docker | Ganho Docker (Aceleração) | Hit Ratio | Passos Warmup |
-|---:|---|---|---:|---|---|---:|---:|---:|
-| **1** | 100,60 ms · 10 rps | **7,14 ms · 140 rps** | **+1.300% (14,0×)** | 84,83 ms · 12 rps | **1,73 ms · 578 rps** | **+4.717% (48,2×)** | 100,0% | 2 |
-| **4** | 129,45 ms · 31 rps | **8,60 ms · 465 rps** | **+1.400% (15,0×)** | 92,22 ms · 43 rps | **2,26 ms · 1.770 rps** | **+4.016% (41,2×)** | 100,0% | 2 |
-| **8** | 212,81 ms · 38 rps | **10,48 ms · 763 rps** | **+1.908% (20,1×)** | 194,69 ms · 41 rps | **2,66 ms · 3.003 rps** | **+7.224% (73,2×)** | 100,0% | 2 |
-| **16** | 406,90 ms · 39 rps | **18,06 ms · 886 rps** | **+2.172% (22,7×)** | 400,89 ms · 40 rps | **4,60 ms · 3.475 rps** | **+8.588% (86,9×)** | 100,0% | 2 |
-| **32** | 835,52 ms · 38 rps | **31,36 ms · 1.020 rps** | **+2.584% (26,8×)** | 862,44 ms · 37 rps | **9,20 ms · 3.478 rps** | **+9.300% (94,0×)** | 100,0% | 2 |
+| Clientes | Origem DOKS (Caminho A) | PgCache 0.7.1 DOKS (Caminho B) | Ganho DOKS (Aceleração) | Hit Ratio | Passos Warmup |
+|---:|---|---|---:|---:|---:|
+| **1** | 100,60 ms · 10 rps | **7,14 ms · 140 rps** | **+1.300% (14,0×)** | 100,0% | 2 |
+| **4** | 129,45 ms · 31 rps | **8,60 ms · 465 rps** | **+1.400% (15,0×)** | 100,0% | 2 |
+| **8** | 212,81 ms · 38 rps | **10,48 ms · 763 rps** | **+1.908% (20,1×)** | 100,0% | 2 |
+| **16** | 406,90 ms · 39 rps | **18,06 ms · 886 rps** | **+2.172% (22,7×)** | 100,0% | 2 |
+| **32** | 835,52 ms · 38 rps | **31,36 ms · 1.020 rps** | **+2.584% (26,8×)** | 100,0% | 2 |
 
-Para a análise completa de escala de tenants (no DOKS de 3 nós: `100,0%` de hit ratio de 1 a 500 tenants com `+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants) e resiliência a escritas mistas (`63,1%–75,0%` de hit ratio no DOKS sob 5%–10% de escritas), consulte [`results/0.7.1/README-pt.md`](0.7.1/README-pt.md).
+Para a análise completa de escala de tenants no DOKS de 3 nós (`100,0%` de hit ratio de 1 a 500 tenants com `+2.133%` em 1 tenant, `+1.774%` em 200 tenants e `+1.108%` em 500 tenants) e resiliência a escritas mistas (`63,1%–75,0%` de hit ratio no DOKS sob 5%–10% de escritas), consulte [`results/0.7.1/README-pt.md`](0.7.1/README-pt.md).
 
 ---
 
-## 4. Visão Comparativa de Ambientes: DOKS vs Docker
-
-### 4.1 Por que o Ganho de Vazão foi Maior no Docker (+140% a +160%) do que no DOKS (+40% a +93%)
-
-Uma dúvida frequente ao comparar os números do Docker local com os do Kubernetes em nuvem (DOKS) é a diferença no percentual de aceleração relativa:
-
-$$\text{Ganho relativo no Docker: } \mathbf{+140\%\text{ a }+161\%} \quad \text{vs} \quad \text{Ganho relativo no DOKS: } \mathbf{+40\%\text{ a }+93\%}$$
-
-Essa divergência decorre de quatro fatores estruturais, de hardware e de arquitetura:
+## 3. Insights Arquiteturais: Piso de Rede e Lei de Amdahl em Clusters de 3 Nós
 
 1. **O Multiplicador de Rede de 8 Consultas Sequenciais e a Lei de Amdahl**:
-   - A requisição sob teste (`dashboard.sql`) é composta por **8 consultas SQL sequenciais** executadas sob o protocolo de consulta simples (`-M simple`), sem blocos de transação `BEGIN...COMMIT`.
-   - Cada instrução exige seu próprio round-trip de rede (Envio de Query → Resposta / `ReadyForQuery`). Logo, cada transação realiza **8 idas e vindas de rede consecutivas**.
-   - No **Docker local**, todos os contêineres se comunicam por loopback/bridge dentro do mesmo kernel do sistema operacional. O tempo de ida e volta (RTT) é virtualmente zero (~50 a 80 µs). O overhead total de rede por transação é de `< 0,6 ms`. A computação pura de consultas na CPU domina ~98% do tempo medido.
-   - No **DigitalOcean (DOKS em 3 nós físicos distintos)**, a latência de rede entre VMs (`sfo3`/`sfo2`) gira em torno de **~0,6 a 0,8 ms por RTT**. Para 8 consultas sequenciais, isso introduz um **piso irredutível de rede de $8 \times 0,7\text{ ms} \approx 5,6\text{ ms}$** por transação.
-   - Esse piso de 5,6 ms é pago **tanto pelo Caminho A (Origem) quanto pelo Caminho B (PgCache)**. Pela Lei de Amdahl, adicionar uma constante fixa de rede $C \approx 5,6\text{ ms}$ a ambos os caminhos comprime matematicamente o ganho relativo percentual:
-     $$\text{Docker: } \frac{34,0\text{ ms}}{13,5\text{ ms}} \approx 2,52\times \ (+152\%)$$
-     $$\text{DOKS: } \frac{20,0 + 5,6\text{ ms}}{10,5 + 5,6\text{ ms}} = \frac{25,6\text{ ms}}{16,1\text{ ms}} \approx 1,59\times \ (+59\%)$$
-   - Quando a carga passa de consultas operacionais leves (`23,06 ms`) para telas analíticas complexas (`complex-dashboard.sql`, `204,39 ms`), o piso de rede de 5,6 ms passa a representar `< 3%` do tempo da Origem, e a aceleração no DOKS de 3 nós salta de **1,45× (`+45%`)** para **17,8× (`+1.685%`)** com 8 clientes e **26,8× (`+2.584%`)** com 32 clientes (`31,3× / +3.033%` em `complex-joins.sql`).
-
-2. **Desempenho da Linha de Base da Origem (PostgreSQL)**:
-   - No **Docker**, o PostgreSQL, o PgCache e o gerador de carga pgbench (8 a 32 workers) disputavam os mesmos núcleos de CPU, caches L3 e barramento de memória da máquina host. Sob essa concorrência, a latência da Origem foi inflacionada para **33 a 40 ms (196 a 246 rps)**.
-   - No **DOKS**, a anti-afinidade estrita de pods garantiu à Origem um droplet dedicado de 4 vCPUs sem limitação de CFS e sem processos concorrentes. O PostgreSQL atingiu uma linha de base significativamente melhor: **23 a 27 ms (291 a 343 rps)** — cerca de ~40% mais rápida. Uma origem mais rápida estreita naturalmente o percentual relativo de ganho do cache.
-
-3. **Frequência de CPU e IPC de Núcleo Único**:
-   - Estações de trabalho locais modernas utilizam processadores de alto IPC (ex: Apple Silicon ou CPUs desktop modernas a 3,5–4,5 GHz). O proxy assíncrono em Rust do PgCache opera com latência mínima nesses núcleos.
-   - Os droplets padrão da DOKS (`s-4vcpu-8gb`) operam com núcleos compartilhados AMD EPYC a ~2,0–2,5 GHz com overhead de virtualização KVM, resultando em um tempo ligeiramente maior de parsing e manipulação de conexões.
-
-4. **Implicações da Topologia: Proxy Centralizado vs Sidecar no Nó**:
-   - Este benchmark avaliou rigorosamente a topologia de **Proxy Centralizado** (3 nós físicos separados: Nó 1 = Loadgen, Nó 2 = PgCache, Nó 3 = Origem), forçando todo o tráfego a atravessar a rede física do cluster.
-   - Se o PgCache for implantado em produção como **Sidecar** (no mesmo pod da aplicação) ou como **DaemonSet** (proxy local em cada nó):
-     - As 8 consultas da aplicação chegam ao PgCache via `localhost` ou Unix Domain Socket (`< 0,05 ms` de RTT).
-     - Os acertos de cache (hits) nunca cruzam a rede física, eliminando totalmente o piso de rede de 5,6 ms.
-     - Sob essa topologia descentralizada (sidecar/local), os ganhos de aceleração na nuvem voltam a se aproximar ou superar os ~2,5× (+150%) vistos no Docker.
-
-### 4.2 Principais Conclusões de Ambiente
-
-1. **Escalabilidade do Espaço de Chaves**:
-   - Escalar os tenants ativos de 1 até 1.000 (e até 2.000 no DOKS) **não degrada a taxa de acerto do cache**, mantendo-se em **99,9%–100,0%** em todas as versões testadas no dashboard baseline.
-2. **Validade para Produção**:
-   - O Docker superestima o ganho relativo percentual devido à ausência de latência de rede. O DOKS entrega a medição fidedigna e autoritativa para topologias reais de nuvem.
+   - Cada requisição (`dashboard.sql` e `complex-dashboard.sql`) é composta por **8 consultas SQL sequenciais** executadas sob o protocolo de consulta simples (`-M simple`), sem blocos `BEGIN...COMMIT`.
+   - No **DigitalOcean (DOKS em 3 nós físicos distintos)**, a latência de rede entre VMs gira em torno de **~0,6 a 0,8 ms por RTT**. Para 8 consultas sequenciais, isso introduz um **piso irredutível de rede de $8 \times 0,7\text{ ms} \approx 5,6\text{ ms}$** por transação, pago tanto pelo Caminho A (Origem) quanto pelo Caminho B (PgCache).
+   - Quando a carga é leve (`dashboard.sql`, `23,06 ms` na Origem), o piso de rede de `5,6 ms` representa ~24% do tempo total da requisição, limitando a aceleração relativa a **1,45×–1,93× (`+45%` a `+93%`)**.
+   - Quando a carga passa para telas analíticas multi-tabela (`complex-dashboard.sql`, `204,39 ms` na Origem), o piso de rede de `5,6 ms` cai para `< 3%` do tempo de execução da Origem, e a aceleração no DOKS de 3 nós salta para **17,8× (`+1.685%`)** com 8 clientes e **26,8× (`+2.584%`)** com 32 clientes (**31,3× / `+3.033%`** em `complex-joins.sql`).
+2. **Por que o Docker Local não faz parte dos Resultados de Benchmark**:
+   - No Docker de host único (`infra/docker-compose.yml`), `origin`, `pgcache` e `loadgen` compartilham os mesmos núcleos de CPU da máquina host e comunicam-se via loopback (`~50 µs` RTT), violando o isolamento físico de nós e inflando artificialmente as taxas de aceleração. Por isso, o Docker local é restrito exclusivamente à montagem de ambiente e validação funcional/corretude (`scripts/verify-correctness.sh`).
 
 ---
 
-## 5. Estrutura de Diretórios por Tag
+## 4. Estrutura de Diretórios por Tag
 
-- [`0.6.3/`](0.6.3/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.3`.
-- [`0.6.4/`](0.6.4/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.6.4`.
-- [`0.7.0/`](0.7.0/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-docker.tsv`) e logs da tag `0.7.0`.
-- [`0.7.1/`](0.7.1/README-pt.md): Resultados completos, TSVs (`results-doks.tsv`, `results-complex-doks.tsv`, `results-docker.tsv`, `results-complex.tsv`), gates diferenciais de correção (`verify-correctness-doks.txt`, `verify-correctness.txt`) e logs dos cenários complexos da tag `0.7.1`.
-- [`tuned/`](tuned/README-pt.md): Resultados completos, TSVs (`results.tsv`) e logs do Perfil Otimizado / Tuned (`0.7.0` com ajustes de rede e engine).
+- [`0.6.3/`](0.6.3/README-pt.md): Resultados e logs da tag `0.6.3`.
+- [`0.6.4/`](0.6.4/README-pt.md): Resultados e logs da tag `0.6.4`.
+- [`0.7.0/`](0.7.0/README-pt.md): Resultados e logs da tag `0.7.0`.
+- [`0.7.1/`](0.7.1/README-pt.md): Resultados oficiais em DOKS 3 nós (`results-doks.tsv`, `results-complex-doks.tsv`), gate diferencial de correção (`verify-correctness-doks.txt`) e logs dos cenários complexos da tag `0.7.1`.
+- [`endurance-90m/`](endurance-90m/README-pt.md): Runbook e telemetria DOKS + Grafana Cloud do teste de endurance de 1h30m e alívio de recursos na Origem (`SCALE=20`).
+- [`tuned/`](tuned/README-pt.md): Resultados e logs do Perfil Otimizado / Tuned (`0.7.0` com ajustes de rede e engine no DOKS).

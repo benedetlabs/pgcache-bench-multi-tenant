@@ -11,10 +11,11 @@
 #
 # Modes (pass as $1, default: all):
 #   scenarios : Compare all workload shapes at fixed tenants & concurrency
-#   tenants   : Sweep active tenants (1..1000) on complex-dashboard.sql
+#   tenants   : Sweep active tenants (1..1000) on complex-dashboard.sql (uniform)
+#   zipfian   : Sweep active tenants (100..2000) on complex-dashboard-zipfian.sql (Pareto 80/20)
 #   clients   : Sweep client concurrency (1..32) on complex-dashboard.sql
 #   writes    : Sweep mixed write ratios (0%, 5%, 10%) on complex-dashboard.sql
-#   all       : Run all four sections sequentially
+#   all       : Run scenarios, tenants, clients, and writes sequentially
 # ============================================================================
 
 set -uo pipefail
@@ -23,6 +24,7 @@ source "$(dirname "$0")/lib.sh"
 MODE="${1:-all}"
 TENANTS="${TENANTS:-200}"
 TENANTS_LIST="${TENANTS_LIST:-1 10 50 200 500 1000}"
+ZIPF_TENANTS_LIST="${ZIPF_TENANTS_LIST:-100 200 500 1000 2000}"
 CLIENTS_LIST="${CLIENTS_LIST:-1 4 8 16 32}"
 SPECS="${2:-${WRITE_SPECS:-0:$TENANTS 5:1 5:10 5:$TENANTS 10:1 10:$TENANTS}}"
 
@@ -47,6 +49,14 @@ run_complex_tenants() {
       reset_pgcache
     fi
     cell "$T" -f /tmp/mt/complex-dashboard.sql -D tenants="$T"
+  done
+}
+
+run_complex_zipfian() {
+  header z_tenants
+  for T in $ZIPF_TENANTS_LIST; do
+    reset_pgcache
+    cell "$T" -f /tmp/mt/complex-dashboard-zipfian.sql -D tenants="$T"
   done
 }
 
@@ -79,6 +89,7 @@ run_complex_writes() {
 case "$MODE" in
   scenarios) run_scenarios ;;
   tenants)   run_complex_tenants ;;
+  zipfian)   run_complex_zipfian ;;
   clients)   run_complex_clients ;;
   writes)    run_complex_writes ;;
   all)
@@ -91,6 +102,6 @@ case "$MODE" in
     run_complex_writes
     ;;
   *)
-    die "Unknown mode: $MODE (expected: scenarios|tenants|clients|writes|all)"
+    die "Unknown mode: $MODE (expected: scenarios|tenants|zipfian|clients|writes|all)"
     ;;
 esac

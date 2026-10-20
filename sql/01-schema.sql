@@ -130,4 +130,11 @@ CREATE INDEX ON review(product_id);
 CREATE INDEX ON review(customer_id);
 CREATE INDEX ON customer(tenant_id);
 
+-- Sequences for live INSERT benchmark workloads (starting at 100,000,000 to
+-- avoid collisions with seeded IDs up to SCALE=20 and allow fast trial cleanup)
+CREATE SEQUENCE IF NOT EXISTS orders_id_seq START WITH 100000000;
+CREATE SEQUENCE IF NOT EXISTS order_item_id_seq START WITH 100000000;
+ALTER TABLE orders ALTER COLUMN id SET DEFAULT nextval('orders_id_seq');
+ALTER TABLE order_item ALTER COLUMN id SET DEFAULT nextval('order_item_id_seq');
+
 ANALYZE;
