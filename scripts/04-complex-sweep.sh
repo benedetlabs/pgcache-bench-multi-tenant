@@ -30,16 +30,18 @@ SPECS="${2:-${WRITE_SPECS:-0:$TENANTS 5:1 5:10 5:$TENANTS 10:1 10:$TENANTS}}"
 
 run_scenarios() {
   header scenario
-  reset_pgcache
-  cell " dash_base" -f /tmp/mt/dashboard.sql         -D tenants="$TENANTS"
-  reset_pgcache
-  cell "   search"  -f /tmp/mt/complex-search.sql    -D tenants="$TENANTS"
-  reset_pgcache
-  cell "    joins"  -f /tmp/mt/complex-joins.sql     -D tenants="$TENANTS"
-  reset_pgcache
-  cell "analytics"  -f /tmp/mt/complex-analytics.sql -D tenants="$TENANTS"
-  reset_pgcache
-  cell "cplx_dash"  -f /tmp/mt/complex-dashboard.sql -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell " dash_base" -f /tmp/mt/dashboard.sql                 -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell "   search"  -f /tmp/mt/complex-search.sql            -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell "    joins"  -f /tmp/mt/complex-joins.sql             -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell "analytics"  -f /tmp/mt/complex-analytics.sql         -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell "cplx_dash"  -f /tmp/mt/complex-dashboard.sql         -D tenants="$TENANTS"
+  [ "${TRIALS:-1}" -le 1 ] && reset_pgcache
+  cell "cplx_zipf"  -f /tmp/mt/complex-dashboard-zipfian.sql -D tenants="$TENANTS"
 }
 
 run_complex_tenants() {

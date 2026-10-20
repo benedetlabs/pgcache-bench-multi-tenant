@@ -240,6 +240,7 @@ reset_all_pods() {
   fi
 
   echo "  [reset_all_pods] Recreating origin, pgcache, and loadgen pods in namespace $NS..." >&2
+  kubectl -n "$NS" rollout restart deploy/loadgen >/dev/null 2>&1 || true
   if kubectl -n "$NS" get statefulset origin >/dev/null 2>&1; then
     kubectl -n "$NS" rollout restart statefulset/origin >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status statefulset/origin --timeout=5m >/dev/null 2>&1 || true
@@ -247,8 +248,6 @@ reset_all_pods() {
     kubectl -n "$NS" rollout restart deploy/origin >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status deploy/origin --timeout=5m >/dev/null 2>&1 || true
   fi
-
-  kubectl -n "$NS" rollout restart deploy/loadgen >/dev/null 2>&1 || true
   kubectl -n "$NS" rollout status deploy/loadgen --timeout=3m >/dev/null 2>&1 || true
   WORKLOAD_SCRIPTS_READY=0
   ensure_workload_scripts
@@ -269,15 +268,12 @@ reset_all_pods() {
 # ── Ensure Workload Scripts ────────────────────────────────────────────────
 ensure_workload_scripts() {
   if [ "$BENCH_ENV" = "k8s" ] && [ "${WORKLOAD_SCRIPTS_READY:-0}" != "1" ]; then
-    if ! kubectl -n "$NS" exec -c bench deploy/loadgen -- test -f /tmp/mt/complex-dashboard.sql 2>/dev/null; then
-      echo "--> Workload scripts missing in loadgen pod; restoring..." >&2
-      kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
-      for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian; do
-        if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
-          kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
-        fi
-      done
-    fi
+    kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
+    for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian; do
+      if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
+        kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
+      fi
+    done
     WORKLOAD_SCRIPTS_READY=1
   fi
 }

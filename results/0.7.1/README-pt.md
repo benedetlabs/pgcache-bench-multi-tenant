@@ -137,8 +137,35 @@ Log bruto: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)
 
 ---
 
-## 5. Artefatos Brutos (DOKS 3 Nós)
+## 5. Verificação Estatística Multi-Trial (`TRIALS=5`, Recriação Completa de Pods `RECREATE_PODS_MODE=all`) no DOKS 3 Nós
 
+Para eliminar anomalias pontuais e capturar as faixas de desvio negativo e positivo (`-Δ/+Δ`) e o desvio padrão (`sd`), cada célula abaixo foi executada **5 vezes independentes (`TRIALS=5`, `DURATION=15s`)**, recriando todos os pods de benchmark (`origin-0`, `pgcache` e `loadgen`) via `reset_all_pods` antes de cada trial no cluster DOKS de 3 nós (`s-4vcpu-8gb`).
+
+Logs brutos: [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt) · [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt) · [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
+
+| Cenário / Carga | Origem Path A Lat (ms) | Origem Path A RPS (Média \| `-Δ/+Δ` \| `sd`) | PgCache Path B Lat (ms) | PgCache Path B RPS (Média \| `-Δ/+Δ` \| `sd`) | Hit Ratio | Ganho Médio (`-Δ/+Δ`) | Passos Warmup |
+|---|---:|---|---:|---|---:|---|---:|
+| **`dash_base`** (`dashboard.sql`, 100% cacheável, 200 tenants) | 57,84 ms | **146** (`-36/+60`, `sd 40,5`) | 29,36 ms | **273** (`-23/+21`, `sd 16,3`) | **100,0%** | **+98%** (`-68%/+69%`) | 5,4 |
+| **`search`** (`complex-search.sql`, 200 tenants) | 129,63 ms | **63** (`-13/+11`, `sd 9,2`) | 6,90 ms | **1.170** (`-150/+157`, `sd 126,1`) | **100,0%** | **+1.778% (18,8×)** (`-266%/+243%`) | 5,2 |
+| **`joins`** (`complex-joins.sql`, 200 tenants) | 238,86 ms | **34** (`-4/+3`, `sd 2,8`) | 8,24 ms | **991** (`-170/+190`, `sd 160,6`) | **100,0%** | **+2.839% (29,4×)** (`-666%/+443%`) | 6,4 |
+| **`analytics`** (`complex-analytics.sql`, 200 tenants) | 175,27 ms | **46** (`-7/+4`, `sd 4,1`) | 8,97 ms | **905** (`-131/+130`, `sd 122,1`) | **100,0%** | **+1.883% (19,8×)** (`-395%/+267%`) | 6,8 |
+| **`cplx_dash`** (`complex-dashboard.sql` Uniforme, 200 tenants) | 307,52 ms | **26** (`-1/+2`, `sd 1,2`) | 23,35 ms | **389** (`-198/+157`, `sd 132,6`) | **100,0%** | **+1.400% (15,0×)** (`-766%/+684%`) | 7,8 |
+| **`z_tenants=200`** (`complex-dashboard-zipfian.sql` Pareto 80/20, 200 tenants) | 339,25 ms | **24** (`-5/+6`, `sd 4,1`) | 76,00 ms | **267** (`-236/+205`, `sd 191,3`) | **97,5%** | **+1.051% (11,5×)** (`-1.016%/+917%`) | 7,4 |
+| **`z_tenants=2000`** (`complex-dashboard-zipfian.sql` Pareto 80/20, 2.000 tenants) | 373,09 ms | **22** (`-3/+2`, `sd 1,9`) | 351,21 ms | **24** (`-4/+8`, `sd 5,4`) | **64,1%** | **+9%** (`-26%/+30%`) | 5,8 |
+| **`5:10 (upd+ins)`** (Partida fria com `UPDATE orders` + `INSERT INTO order_item`, 200 tenants) | 327,87 ms | **25** (`-4/+3`, `sd 2,7`) | 2.995,47 ms | **3** (`-1/+5`, `sd 2,6`) | **32,4%** | **-85%** (`-8%/+23%`) | 3,0 |
+
+### Principais Insights Multi-Trial
+1. **100% de Cacheabilidade no Baseline (`dash_base`)**: Pré-computar `:off_rows` (`:off * 20`) e `:min_total` (`:st * 50`) em [`workload/dashboard.sql`](../../workload/dashboard.sql) eliminou o vazamento de 25% de consultas não-cacheáveis, elevando a vazão média de 5 trials com partida fria de `146 rps` (`sd 40,5`) na Origem para **`273 rps` (`sd 16,3`, `+98%` de ganho médio, `100,0%` de hit ratio real)** no PgCache.
+2. **Escala Pareto / Zipfian 80/20 em 2.000 Tenants (`z_tenants=2000`)**: Enquanto a amostragem aleatória uniforme entre 1.000 e 2.000 tenants provoca churn de misses frios em janelas curtas de 15s, o tráfego SaaS realista com distribuição Pareto (`random_zipfian(1, 2000, 1.07)`) mantém os 20% de tenants mais quentes nas Materialized Views em todos os 5 trials (**64,1% de hit ratio**, **+9% de ganho médio** em 2.000 tenants).
+3. **Estresse de Partida Fria com `UPDATE + INSERT` Concorrente (`5:10 (upd+ins)`)**: Quando cada trial recria todos os pods a partir de um cache 100% frio (`reset_all_pods`) disparando simultaneamente `UPDATE orders` e `INSERT INTO order_item` (`workload/write.sql@5`), os eventos contínuos de CDC `INSERT` + `UPDATE` invalidam as Materialized Views de `orders` e `order_item` durante a população inicial (`32,4%` de hit ratio em 3 passes limitados).
+
+---
+
+## 6. Artefatos Brutos (DOKS 3 Nós)
+
+- Log bruto Multi-Trial (`TRIALS=5`) Cenários Complexos (DOKS): [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt)
+- Log bruto Multi-Trial (`TRIALS=5`) Pareto/Zipfian 80/20 (DOKS): [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt)
+- Log bruto Multi-Trial (`TRIALS=5`) Escrita Fria `UPDATE + INSERT` (DOKS): [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
 - TSV Baseline (DOKS): [`results-doks.tsv`](results-doks.tsv)
 - TSV Cenários Complexos (DOKS): [`results-complex-doks.tsv`](results-complex-doks.tsv)
 - Log do Gate Diferencial de Correção, Cacheabilidade e MV (DOKS): [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
