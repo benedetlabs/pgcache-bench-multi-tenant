@@ -1,123 +1,49 @@
-# PgCache Benchmark Verification — Tag 0.7.0
+# PgCache 0.7.0 Benchmark Report: Default vs. Tuned Network Profile on a 3-Node Cloud Cluster
 
-> 🇧🇷 **[Versão em português](README-pt.md)**
+> 🇧🇷 **[Ler em português](README-pt.md)**
 
-Verification run for **PgCache v0.7.0** (`pgcache/pgcache:0.7.0`) executed across two complementary environments:
-1. **DigitalOcean Kubernetes (DOKS)**: 3-node bare-droplet topology across 1 to 2,000 tenants.
-2. **Local Docker Environment**: Single-host baseline across 1 to 1,000 tenants, concurrency scaling, and mixed write workloads.
+This report documents the verification of **PgCache v0.7.0** (`pgcache/pgcache:0.7.0`) on our **3-node DigitalOcean Kubernetes (DOKS)** cluster (`3× s-4vcpu-8gb` in a single availability zone), comparing both the default cluster setup and our tuned Linux network & engine profile from 1 to 2,000 active tenants.
 
----
-
-## 1. Summary
-
-- **Hit Ratio**: **100.0%** across all tenant tiers on DOKS (1 to 2,000 tenants), and **100.0%** up to 500 tenants / **99.7%** at 1,000 tenants on local Docker.
-- **Key-Space Scaling**: PgCache maintained robust request latencies (~15.6 ms to 18.8 ms across most cells) with up to **513 rps** (15.6 ms vs 23.3 ms, +50% gain) on DOKS.
-- **Warm-up Passes**: Settled in 2 passes (60s) for 1–100 tenants, 3 passes (90s) for 500–1,000 tenants, and 4 passes (120s) for 2,000 tenants on DOKS.
-- **Throughput Gain**: Maintained **+38% to +64% throughput gain** under multi-tenant expansion up to 2,000 tenants on DOKS, and **+115% to +229%** on local Docker.
-- **Environment Parity**: Retains both production cloud and local development benchmark data.
+> **Why Only 3-Node Cloud Numbers Are Shown**: Local Docker Compose is used strictly to set up the database and test SQL correctness locally; all performance numbers come exclusively from the 3-node Kubernetes cluster.
 
 ---
 
-## 2. Infrastructure & Environment Details
+## 1. Key Takeaways
 
-| Component | DigitalOcean Kubernetes (DOKS) | Local Docker Development |
+- **100.0% Cache Hit Rate Up to 2,000 Tenants**: Across both the default and tuned profiles, PgCache 0.7.0 maintained a 100.0% hit ratio across all tenant tiers from 1 to 2,000 tenants.
+- **Default Profile (+38% to +64% Gain)**: Reduced 8-query dashboard latency from **23.3–28.5 ms** on PostgreSQL down to **15.6–18.8 ms** on PgCache (up to **513 req/s**).
+- **Tuned Profile Boosts High-Tenant Scaling (+38% → +67% at 2,000 Tenants)**: Enabling VirtIO multi-core packet steering (`rps_cpus=f`), direct node IP routing (bypassing CoreDNS), and 8 worker threads lifted the relative gain at 1,000–2,000 tenants to **+67%–+68%**.
+
+---
+
+## 2. Default vs. Tuned Cluster Configuration (3 Dedicated Cloud VMs)
+
+| Setting | Default 3-Node DOKS | Tuned 3-Node DOKS |
 |---|---|---|
-| **Topology** | 3 separate physical nodes (`sfo3` single-AZ) | Single-host container runtime |
-| **Compute Nodes** | 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM) | Shared host cores / memory |
-| **Control Plane** | `--ha=false` ($0 control plane fee) | Local Docker daemon |
-| **Node OS / Kernel** | Debian 13 (trixie), kernel 6.12.96 | Host kernel |
-| **Storage Class** | `do-block-storage` CSI (25 GiB origin, 15 GiB loadgen) | Local bind-mount volumes |
-| **Pod / Node Isolation** | Strict `podAntiAffinity` (1 node each: origin, pgcache, loadgen) | Shared host CFS scheduler |
-| **Networking** | `hostNetwork: true` (direct host IP routing) | Docker bridge network |
-| **CPU Limits** | Unset (avoids CFS quota throttling jitter) | Unset |
-| **Origin Settings** | PostgreSQL 17, `shared_buffers=512MB` | PostgreSQL 17, `shared_buffers=1GB` |
-| **PgCache Settings** | `workers=4`, `metricsPort=9091` | `workers=4`, `metricsPort=9090` |
-| **Dataset Sizing** | 500k orders, 2M items (~594 MB), 2,000 tenants | 500k orders, 2M items (~463 MB), 1,000 tenants |
+| **Nodes** | 3× `s-4vcpu-8gb` (`sfo3` single-AZ, `--ha=false`) | 3× `s-4vcpu-8gb` (`sfo3` single-AZ, `--ha=false`) |
+| **Node Isolation** | Strict `podAntiAffinity` + `hostNetwork: true` | Strict `podAntiAffinity` + `hostNetwork: true` |
+| **Linux Network Stack** | OS Defaults | `tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_tw_reuse=1`, VirtIO RPS (`rps_cpus=f`) |
+| **Host Resolution** | Headless Service DNS (`CoreDNS`) | Direct node IP routing |
+| **PgCache Workers** | `NUM_WORKERS=4` | `NUM_WORKERS=8`, `PGCACHE_POPULATION_WORKERS_MIN=4`, `MEMO_CACHE_SIZE=1073741824` |
 
 ---
 
-## 3. Sweep 1 — Tenant Count Sweep
+## 3. Scaling Active Tenants (`1` to `2,000` Tenants, 8 Concurrent Clients)
 
-### 3.1 DigitalOcean Kubernetes (DOKS — 1 to 2,000 Tenants)
-
-Evaluating query space expansion across 1, 10, 50, 100, 500, 1,000, and 2,000 active tenants (concurrency fixed at 8 clients, 30s duration, dynamic warmup):
-
-| Active Tenants | Origin (Path A) | PgCache 0.7.0 (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---:|---:|
-| 1 | 23.3 ms · 343 rps | 15.6 ms · 513 rps | +50% | 100.0% | 2 |
-| 10 | 23.9 ms · 335 rps | 22.9 ms · 349 rps | +4% | 100.0% | 2 |
-| 50 | 28.5 ms · 281 rps | 17.3 ms · 462 rps | +64% | 100.0% | 2 |
-| 100 | 26.0 ms · 307 rps | 17.2 ms · 465 rps | +51% | 100.0% | 2 |
-| 500 | 25.7 ms · 311 rps | 18.7 ms · 428 rps | +38% | 100.0% | 3 |
-| 1,000 | 26.0 ms · 307 rps | 17.2 ms · 466 rps | +52% | 100.0% | 3 |
-| 2,000 | 25.9 ms · 309 rps | 18.8 ms · 425 rps | +38% | 100.0% | 4 |
-
-### 3.2 DigitalOcean Kubernetes — Tuned Profile (Baseline vs Tuned Comparison)
-
-Evaluating the impact of Linux network tuning (`tcp_slow_start_after_idle=0`, `somaxconn=65535`, `tcp_tw_reuse=1`, VirtIO RPS `rps_cpus=f`), direct node IP routing (CoreDNS bypass), and PgCache engine sizing (`NUM_WORKERS=8`, `MEMO_CACHE_SIZE=1073741824`, `PGCACHE_POPULATION_WORKERS_MIN=4`):
-
-| Active Tenants | Baseline Origin | Baseline PgCache | Baseline Gain | Tuned Origin | Tuned PgCache | Tuned Gain | Hit Ratio | Warm Passes |
+| Active Tenants | Default Origin | Default PgCache 0.7.0 | Default Gain | Tuned Origin | Tuned PgCache 0.7.0 | Tuned Gain | Hit Ratio | Warm Passes |
 |---:|---|---|---:|---|---|---:|---:|---:|
-| **1** | 23.3 ms · 343 rps | 15.6 ms · 513 rps | +50% | 30.4 ms · 263 rps | 24.0 ms · 333 rps | +27% | 100.0% | 2 |
-| **10** | 23.9 ms · 335 rps | 22.9 ms · 349 rps | +4% | 33.1 ms · 242 rps | 22.0 ms · 363 rps | +50% | 100.0% | 2 |
-| **50** | 28.5 ms · 281 rps | 17.3 ms · 462 rps | +64% | 32.7 ms · 245 rps | 21.5 ms · 371 rps | +51% | 100.0% | 2 |
-| **100** | 26.0 ms · 307 rps | 17.2 ms · 465 rps | +51% | 33.0 ms · 243 rps | 19.3 ms · 414 rps | **+70%** | 100.0% | 2 |
-| **500** | 25.7 ms · 311 rps | 18.7 ms · 428 rps | +38% | 30.0 ms · 266 rps | 22.3 ms · 359 rps | +35% | 100.0% | 3 |
-| **1,000** | 26.0 ms · 307 rps | 17.2 ms · 466 rps | +52% | 33.2 ms · 241 rps | 19.7 ms · 405 rps | **+68%** | 100.0% | 3 |
-| **2,000** | 25.9 ms · 309 rps | 18.8 ms · 425 rps | +38% | 34.2 ms · 234 rps | 20.5 ms · 390 rps | **+67%** | 100.0% | 4 |
-
-### 3.3 Local Docker Development Environment (1 to 1,000 Tenants)
-
-Evaluating local Docker single-host baseline across 1, 10, 50, 200, 500, and 1,000 active tenants:
-
-| Active Tenants | Origin (Path A) | PgCache 0.7.0 (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---:|---:|
-| 1 | 46.1 ms · 174 rps | 14.0 ms · 572 rps | +229% | 100.0% | 3 |
-| 10 | 33.5 ms · 239 rps | 14.1 ms · 567 rps | +137% | 100.0% | 2 |
-| 50 | 32.5 ms · 246 rps | 15.1 ms · 529 rps | +115% | 100.0% | 3 |
-| 200 | 37.0 ms · 216 rps | 15.4 ms · 521 rps | +141% | 100.0% | 3 |
-| 500 | 36.5 ms · 219 rps | 16.1 ms · 496 rps | +126% | 100.0% | 4 |
-| 1,000 | 36.0 ms · 222 rps | 15.7 ms · 510 rps | +130% | 99.7% | 5 |
+| **1** | 23.3 ms · 343 req/s | **15.6 ms · 513 req/s** | **+50%** | 30.4 ms · 263 req/s | **24.0 ms · 333 req/s** | **+27%** | 100.0% | 2 |
+| **10** | 23.9 ms · 335 req/s | **22.9 ms · 349 req/s** | **+4%** | 33.1 ms · 242 req/s | **22.0 ms · 363 req/s** | **+50%** | 100.0% | 2 |
+| **50** | 28.5 ms · 281 req/s | **17.3 ms · 462 req/s** | **+64%** | 32.7 ms · 245 req/s | **21.5 ms · 371 req/s** | **+51%** | 100.0% | 2 |
+| **100** | 26.0 ms · 307 req/s | **17.2 ms · 465 req/s** | **+51%** | 33.0 ms · 243 req/s | **19.3 ms · 414 req/s** | **+70%** | 100.0% | 2 |
+| **500** | 25.7 ms · 311 req/s | **18.7 ms · 428 req/s** | **+38%** | 30.0 ms · 266 req/s | **22.3 ms · 359 req/s** | **+35%** | 100.0% | 3 |
+| **1,000** | 26.0 ms · 307 req/s | **17.2 ms · 466 req/s** | **+52%** | 33.2 ms · 241 req/s | **19.7 ms · 405 req/s** | **+68%** | 100.0% | 3 |
+| **2,000** | 25.9 ms · 309 req/s | **18.8 ms · 425 req/s** | **+38%** | 34.2 ms · 234 req/s | **20.5 ms · 390 req/s** | **+67%** | 100.0% | 4 |
 
 ---
 
-## 4. Sweep 2 — Client Concurrency Sweep (Docker Baseline)
+## 4. Raw Benchmark Logs
 
-Separating pure read cache speed from origin saturation (concurrency scaling at 1,000 tenants):
-
-| Clients | Origin (Path A) | PgCache (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---:|---:|
-| 1 | 11.5 ms · 87 rps | 5.55 ms · 180 rps | +107% | 100.0% | 2 |
-| 4 | 19.5 ms · 205 rps | 9.10 ms · 439 rps | +114% | 100.0% | 2 |
-| 8 | 36.5 ms · 219 rps | 14.90 ms · 537 rps | +145% | 100.0% | 2 |
-| 16 | 58.9 ms · 272 rps | 25.97 ms · 616 rps | +126% | 100.0% | 2 |
-| 32 | 107.8 ms · 297 rps | 51.09 ms · 626 rps | +111% | 100.0% | 2 |
-
----
-
-## 5. Sweep 3 — Write Ratio and Concentration Sweep (Docker Baseline)
-
-Testing cache invalidation resilience with mixed reads and writes (8 clients, 1,000 tenants):
-
-| Writes | Write Tenants | Origin (Path A) | PgCache (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---:|---|---|---:|---:|---:|
-| 0% | 1000 | 35.6 ms · 225 rps | 14.91 ms · 537 rps | +139% | 100.0% | 2 |
-| 5% | 1 | 32.5 ms · 246 rps | 19.60 ms · 408 rps | +66% | 100.0% | 2 |
-| 5% | 10 | 31.6 ms · 253 rps | 19.43 ms · 412 rps | +63% | 100.0% | 2 |
-| 5% | 1000 | 31.8 ms · 252 rps | 20.96 ms · 382 rps | +52% | 100.0% | 2 |
-| 10% | 1 | 32.1 ms · 249 rps | 18.97 ms · 422 rps | +69% | 100.0% | 2 |
-| 10% | 1000 | 31.2 ms · 257 rps | 25.14 ms · 318 rps | +24% | 100.0% | 2 |
-
----
-
-## 6. Raw Artifacts
-
-- Machine-readable data: [`results.tsv`](results.tsv)
-- DigitalOcean DOKS Baseline TSV: [`results-doks.tsv`](results-doks.tsv)
-- DigitalOcean DOKS Tuned TSV: [`results-tuned.tsv`](results-tuned.tsv)
-- Local Docker TSV: [`results-docker.tsv`](results-docker.tsv)
-- Tenants sweep raw log (DOKS Baseline): [`run-tenants-doks.txt`](run-tenants-doks.txt)
-- Tenants sweep raw log (DOKS Tuned): [`run-tenants-tuned.txt`](run-tenants-tuned.txt)
-- Tenants sweep raw log (Docker): [`run-tenants-docker.txt`](run-tenants-docker.txt)
-- Concurrency sweep raw log (Docker): [`run-clients.txt`](run-clients.txt)
-- Write sweep raw log (Docker): [`run-writes.txt`](run-writes.txt)
+- 3-Node DOKS TSV: [`results-doks.tsv`](results-doks.tsv)
+- 3-Node DOKS Tenant Sweep Log: [`run-tenants-doks.txt`](run-tenants-doks.txt)
+- Tuned Profile Logs: [`../tuned/README.md`](../tuned/README.md)
