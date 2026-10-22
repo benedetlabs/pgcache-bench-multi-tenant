@@ -31,8 +31,9 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 13. [Varredura 2 — separando cache de saturação](#13-varredura-2--separando-cache-de-saturação)
 14. [Varredura 3 — escrita](#14-varredura-3--escrita)
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
-   - [15.1 Varredura 4 — cenários complexos de SaaS multi-tenant (PgCache 0.7.1)](#151-varredura-4--cenários-complexos-de-saas-multi-tenant-pgcache-071)
-   - [15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)](#152-varredura-5--longa-duração-1h30m-e-alívio-de-recursos-na-origem-doks--grafana-cloud)
+   - [15.1 Varredura 4 — cenários complexos de SaaS multi-tenant (PgCache 0.7.1)](#151-varredura-4--o-que-acontece-quando-as-consultas-ficam-pesadas-pgcache-071)
+   - [15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)](#152-varredura-5--teste-de-resistência-de-1h30m-em-um-banco-de-10-gb-doks--grafana-cloud)
+   - [15.3 Varreduras 6 e 7 — O "Teste Justo", Filtros Dinâmicos e Estudo de `ADMISSION_THRESHOLD` (`0.7.1_v2`)](#153-varreduras-6-e-7--o-teste-justo-filtros-dinâmicos-e-estudo-de-admission_threshold-071_v2)
 16. [O que isto não prova](#16-o-que-isto-não-prova)
 17. [Apêndice: todos os arquivos](#17-apêndice-todos-os-arquivos)
 
@@ -1145,6 +1146,19 @@ Até aqui, o banco cabia inteiro na memória RAM do PostgreSQL (`SCALE=1`). O qu
 - **Bônus Inesperado — As Escritas Ficaram 2,2× Mais Rápidas no PostgreSQL**: Como o PgCache tirou o peso das leituras analíticas das costas do PostgreSQL no Bloco 2, o disco e a CPU do banco principal ficaram livres para gravar transações. O tempo médio de um `UPDATE` caiu pela metade, de **227,0 ms para 102,9 ms**.
 - **Uso de Memória Sob Controle**: Durante toda a 1h30m de teste, o PgCache respeitou o teto de 3,5 GiB de RAM (`3,39 GiB` em uso), com **zero quedas e zero expulsões de memória (evictions)**.
 
+### 15.3 Varreduras 6 e 7 — O "Teste Justo", Filtros Dinâmicos e Estudo de `ADMISSION_THRESHOLD` (`0.7.1_v2`)
+
+**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh)** ·
+**Tuning SQL: [`sql/03-fair-tuning.sql`](sql/03-fair-tuning.sql)** ·
+**Cargas: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql)** ·
+**Relatório Completo: [`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)**
+
+Após publicar a Parte 1, conduzimos um segundo estudo empírico (`0.7.1_v2`) para responder a duas perguntas centrais:
+1. **E se dermos ao PostgreSQL 17 de Origem todas as vantagens justas?** (Índices trigrama `GIN pg_trgm` com buscas de 3+ caracteres, índices compostos B-Tree de cobertura e `work_mem=64MB` + `effective_cache_size=6GB`).
+2. **O que acontece sob filtros dinâmicos intra-tenant e aquecimento a frio quando ajustamos o `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) do PgCache?** (Com base na devolutiva arquitetural de James, desenvolvedor principal do PgCache).
+
+Consulte **[`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)** para a análise completa em múltiplas rodadas (`TRIALS=5` e `TRIALS=3`), incluindo como o `ADMISSION_THRESHOLD=4` elimina 100% da regressão de `-56%` em filtros dinâmicos (`235,77 ms / 34 telas/s`) e corta a latência de partida a frio em **58% a 76%**.
+
 ---
 
 ## 16. O que isto não prova
@@ -1189,14 +1203,17 @@ pgcache-multi-tenant/
 │   └── docker-compose.yml           setup de laptop (forma, não magnitudes)
 ├── sql/
 │   ├── 01-schema.sql                7 tabelas, seed, índices estilo ORM
-│   └── 02-tenant.sql                denormalização do tenant_id + índices
+│   ├── 02-tenant.sql                denormalização do tenant_id + índices
+│   └── 03-fair-tuning.sql           índices GIN pg_trgm + B-Tree de cobertura para o Teste Justo
 ├── workload/
 │   ├── dashboard.sql                a requisição operacional de 8 statements
 │   ├── write.sql                    a escrita, com :wtenants
 │   ├── complex-search.sql           4 statements de busca ILIKE '%...%' + JOIN
+│   ├── complex-search-fair.sql      4 statements de busca ILIKE '%...%' de 3+ chars (GIN pg_trgm)
 │   ├── complex-joins.sql            4 statements de JOIN e LEFT JOIN em 4 a 6 tabelas
 │   ├── complex-analytics.sql        4 statements de GROUP BY / FILTER / CASE / HAVING
-│   └── complex-dashboard.sql        tela unificada com 8 statements analíticos e busca
+│   ├── complex-dashboard.sql        tela unificada com 8 statements analíticos e busca
+│   └── complex-dashboard-dynamic.sql tela de 8 statements com 4.000 variações dinâmicas intra-tenant
 ├── scripts/
 │   ├── lib.sh                       scrape, run, warm_until_settled, reset_pgcache, cell
 │   ├── 00-setup.sh                  aplica o esquema, copia a carga para o pod
@@ -1205,6 +1222,8 @@ pgcache-multi-tenant/
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          varreduras de cenários complexos, tenants, clientes e escrita
 │   ├── 05-endurance-90m.sh          campanha de 1h30m de longa duração e alívio de recursos (30+30m leitura, 15+15m R/W)
+│   ├── 06-fair-benchmark.sh         Teste Justo (Origem Otimizada vs PgCache + Filtros Dinâmicos)
+│   ├── 07-admission-threshold-sweep.sh Varredura de ADMISSION_THRESHOLD (1, 2, 4) e Cold-Start
 │   ├── deploy-monitoring.sh         deploy da stack de telemetria Grafana Cloud no Kubernetes
 │   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
 │   ├── aks-cluster.sh               script automatizado de cluster Azure AKS Spot via Terraform
@@ -1218,7 +1237,8 @@ pgcache-multi-tenant/
     ├── 0.6.3/                       resultados para PgCache 0.6.3
     ├── 0.6.4/                       resultados para PgCache 0.6.4
     ├── 0.7.0/                       resultados para PgCache 0.7.0
-    ├── 0.7.1/                       resultados e cenários complexos para PgCache 0.7.1
+    ├── 0.7.1/                       Parte 1: resultados e cenários complexos para PgCache 0.7.1
+    ├── 0.7.1_v2/                    Parte 2: Teste Justo, Filtros Dinâmicos e estudo de ADMISSION_THRESHOLD
     ├── endurance-90m/               runbook de longa duração (1h30m) e alívio de recursos na Origem
     └── tuned/                       resultados do perfil otimizado de rede e engine
 ```

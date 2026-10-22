@@ -105,6 +105,10 @@ spec:
             - name: PGCACHE_POPULATION_WORKERS_MIN
               value: {{ .Values.pgcache.populationWorkersMin | quote }}
             {{- end }}
+            {{- if .Values.pgcache.admissionThreshold }}
+            - name: ADMISSION_THRESHOLD
+              value: {{ .Values.pgcache.admissionThreshold | quote }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.pgcache.listenPort }}
               name: sql
@@ -119,4 +123,4 @@ spec:
         - name: dshm
           emptyDir:
             medium: Memory
-            sizeLimit: 2Gi
+            sizeLimit: 6Gi

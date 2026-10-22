@@ -200,6 +200,8 @@ reset_pgcache() {
       sleep 1
     done
   else
+    kubectl -n "$NS" delete pod --field-selector=status.phase!=Running >/dev/null 2>&1 || true
+    kubectl taint nodes --all node.kubernetes.io/memory-pressure:NoSchedule- >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout restart deploy/pgcache >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status deploy/pgcache --timeout=3m >/dev/null 2>&1 || true
     unset CACHED_PGCACHE_IP
@@ -240,15 +242,23 @@ reset_all_pods() {
   fi
 
   echo "  [reset_all_pods] Recreating origin, pgcache, and loadgen pods in namespace $NS..." >&2
-  kubectl -n "$NS" rollout restart deploy/loadgen >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete pod --field-selector=status.phase!=Running >/dev/null 2>&1 || true
+
+  # Restart one role at a time by deleting its pod while the other 2 nodes remain
+  # occupied, ensuring each pod lands back on its exact same node and node IP.
+  kubectl -n "$NS" delete pod -l app=origin --wait=true >/dev/null 2>&1 || true
   if kubectl -n "$NS" get statefulset origin >/dev/null 2>&1; then
-    kubectl -n "$NS" rollout restart statefulset/origin >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status statefulset/origin --timeout=5m >/dev/null 2>&1 || true
   elif kubectl -n "$NS" get deploy origin >/dev/null 2>&1; then
-    kubectl -n "$NS" rollout restart deploy/origin >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status deploy/origin --timeout=5m >/dev/null 2>&1 || true
   fi
+
+  kubectl -n "$NS" delete pod -l app=loadgen --wait=true >/dev/null 2>&1 || true
   kubectl -n "$NS" rollout status deploy/loadgen --timeout=3m >/dev/null 2>&1 || true
+
+  # Ensure direct node IPs (ORIGIN_HOST, PGCACHE_HOST, UPSTREAM_URL) match current pod scheduling
+  "$REPO_ROOT/scripts/tune-network.sh" >/dev/null 2>&1 || true
+
   WORKLOAD_SCRIPTS_READY=0
   ensure_workload_scripts
 
@@ -262,6 +272,10 @@ reset_all_pods() {
     sleep 2
   done
 
+  if [ "${PREWARM_ORIGIN:-0}" = "1" ]; then
+    ex "psql -h \$ORIGIN_HOST -p \$ORIGIN_PORT -U \$PGUSER -d \$PGDATABASE -q -c \"SELECT count(pg_prewarm(oid)) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'i');\" >/dev/null 2>&1" || true
+  fi
+
   reset_pgcache
 }
 
@@ -269,7 +283,7 @@ reset_all_pods() {
 ensure_workload_scripts() {
   if [ "$BENCH_ENV" = "k8s" ] && [ "${WORKLOAD_SCRIPTS_READY:-0}" != "1" ]; then
     kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
-    for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian; do
+    for f in dashboard write complex-search complex-search-fair complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian complex-dashboard-dynamic; do
       if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
         kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
       fi

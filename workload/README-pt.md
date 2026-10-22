@@ -40,6 +40,8 @@ Este diretório contém todos os scripts de carga SQL do `pgbench` utilizados pa
 | [`complex-analytics.sql`](complex-analytics.sql) | 4 | Todas as 7 tabelas | `GROUP BY` multidimensional, `FILTER (WHERE ...)`, faixas `CASE WHEN`, filtros `HAVING` | `04-complex-sweep.sh scenarios` |
 | [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | Todas as 7 tabelas | Tela corporativa unificada combinando 3 rollups analíticos, 3 visões `JOIN`/`LEFT JOIN` profundas e 2 buscas `ILIKE` (sorteio uniforme) | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
 | [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) | 8 | Todas as 7 tabelas | Mesma tela corporativa de 8 consultas usando distribuição realista **Pareto 80/20 (`random_zipfian(1, :tenants, 1.07)`)** | `04-complex-sweep.sh` (`scenarios`, `zipfian`) |
+| [`complex-search-fair.sql`](complex-search-fair.sql) | 4 | Todas as 7 tabelas | Busca textual `ILIKE '%...%'` de 3+ caracteres (`cust10..19`, `product 10..19`, `seller10..19`, `number 10..19`) compatível com índices trigrama `GIN pg_trgm` do PostgreSQL | `06-fair-benchmark.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README-pt.md)) |
+| [`complex-dashboard-dynamic.sql`](complex-dashboard-dynamic.sql) | 8 | Todas as 7 tabelas | Tela corporativa com 4 filtros dinâmicos intra-tenant (4 status × 3 faixas de preço × 10 categorias × 5 notas + 10 buscas de 3+ chars = 4.000 variações) | `06-fair-benchmark.sh`, `07-admission-threshold-sweep.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README-pt.md)) |
 
 ---
 

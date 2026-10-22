@@ -1,6 +1,6 @@
 # Benchmark do PgCache 0.7.1 em um SaaS Multi-Tenant: O Que Realmente Acontece em um Cluster de 3 Nós na Nuvem
 
-> 🇺🇸 **[Read in English](README.md)**
+> 🇺🇸 **[Read in English](README.md)** · 🚀 **[Ler Parte 2 (`results/0.7.1_v2/`): O "Teste Justo" (Origin `2 GiB` Prewarmed + `GIN pg_trgm`), Filtros Dinâmicos do Usuário e Estudo de `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`)](../0.7.1_v2/README-pt.md)**
 
 Colocar um proxy de cache de leitura na frente do PostgreSQL realmente deixa um sistema SaaS multi-tenant mais rápido — e em quais situações ele encontra seus limites?
 
@@ -43,6 +43,8 @@ Em vez de testar consultas isoladas, cada requisição do `pgbench` simula um us
 4. **Onde o Cache Sofre (Partida Fria com Escritas Simultâneas)**:
    - Quando aquecido primeiro, o PgCache lida bem com 5% a 10% de tráfego de escrita (**63% a 75% de acerto**).
    - Porém, se você reiniciar o cache **totalmente frio** enquanto bombardeia o banco simultaneamente com `UPDATE orders` e `INSERT INTO order_item` ([`write.sql`](../../workload/write.sql)), as invalidações de replicação brigam com o carregamento inicial do cache e derrubam a vazão (**-85%**). Sempre aqueça o cache com leituras antes de virar a chave de cargas mistas intensas.
+5. **Continuação na Parte 2 ([`results/0.7.1_v2/`](../0.7.1_v2/README-pt.md))**:
+   - Veja a **[Parte 2 (`0.7.1_v2`)](../0.7.1_v2/README-pt.md)** para o estudo complementar com **PostgreSQL Origin tunado (`2 GiB` prewarmed + índices `GIN pg_trgm`)**, **busca textual de 3+ caracteres (`search_3c`)**, **filtros dinâmicos intra-tenant (`cplx_dyn`)** e a varredura experimental de **`ADMISSION_THRESHOLD = 1` vs `2` vs `4`** a partir da devolutiva do James (core dev do PgCache).
 
 ---
 
@@ -265,6 +267,7 @@ Log completo da verificação: [`verify-correctness-doks.txt`](verify-correctnes
 
 ## 6. Arquivos Brutos e Logs do Benchmark
 
+- **Estudo Complementar Parte 2 (`results/0.7.1_v2/`)**: [`results/0.7.1_v2/README-pt.md`](../0.7.1_v2/README-pt.md)
 - **Documentação da Modelagem e das Consultas SQL**: [`workload/README-pt.md`](../../workload/README-pt.md)
 - **Logs da Bateria Multi-Trial (`TRIALS=5`, com Recriação Completa dos Pods)**:
   - Cenários Complexos (`TRIALS=5`): [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt)

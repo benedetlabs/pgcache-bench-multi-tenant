@@ -31,8 +31,9 @@ the rest is the reasoning, including the parts we got wrong.
 13. [Sweep 2 — separating caching from saturation](#13-sweep-2--separating-caching-from-saturation)
 14. [Sweep 3 — writes](#14-sweep-3--writes)
 15. [Why the query shape decides everything](#15-why-the-query-shape-decides-everything)
-   - [15.1 Sweep 4 — complex multi-tenant SaaS scenarios (PgCache 0.7.1)](#151-sweep-4--complex-multi-tenant-saas-scenarios-pgcache-071)
-   - [15.2 Sweep 5 — 1h30m endurance & Origin resource offload (DOKS + Grafana Cloud)](#152-sweep-5--1h30m-endurance--origin-resource-offload-doks--grafana-cloud)
+   - [15.1 Sweep 4 — complex multi-tenant SaaS scenarios (PgCache 0.7.1)](#151-sweep-4--what-happens-when-queries-get-heavy-pgcache-071)
+   - [15.2 Sweep 5 — 1h30m endurance & Origin resource offload (DOKS + Grafana Cloud)](#152-sweep-5--90-minute-endurance-test-on-a-10-gb-database-doks--grafana-cloud)
+   - [15.3 Sweeps 6 & 7 — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study (`0.7.1_v2`)](#153-sweeps-6--7--the-fair-benchmark-dynamic-filters--admission_threshold-study-071_v2)
 16. [What this does not prove](#16-what-this-does-not-prove)
 17. [Appendix: every file](#17-appendix-every-file)
 
@@ -1130,6 +1131,19 @@ Everything up to this point used a database that fit inside PostgreSQL's RAM (`S
 - **Surprise Bonus — Writes Get 2.2× Faster on PostgreSQL**: Because PgCache absorbed the heavy analytical reads in Block 2, PostgreSQL's disk I/O and CPU were freed up to process transactions. Average `UPDATE` latency on PostgreSQL dropped in half, from **227.0 ms down to 102.9 ms**.
 - **Rock-Solid Memory Cap**: Across the entire 90-minute run, PgCache stayed safely under its 3.5 GiB memory limit (`3.39 GiB` used) with **zero evictions and zero crashes**.
 
+### 15.3 Sweeps 6 & 7 — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study (`0.7.1_v2`)
+
+**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh)** ·
+**SQL Tuning: [`sql/03-fair-tuning.sql`](sql/03-fair-tuning.sql)** ·
+**Workloads: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql)** ·
+**Full Report: [`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)**
+
+After publishing Part 1, we conducted a second empirical study (`0.7.1_v2`) to answer two critical questions:
+1. **What if we give Origin PostgreSQL 17 every fair advantage?** (`GIN pg_trgm` trigram indexes with 3+ character search needles, composite covering B-Tree indexes, and `work_mem=64MB` + `effective_cache_size=6GB`).
+2. **What happens under dynamic intra-tenant filters and cold-start warm-up when we tune PgCache's `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`)?** (Based on architectural feedback from PgCache core developer James).
+
+See **[`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)** for the complete multi-trial (`TRIALS=5` and `TRIALS=3`) analysis, including why `ADMISSION_THRESHOLD=4` completely eliminates the `-56%` dynamic-filter regression (`235.77 ms / 34 rps`) and cuts cold-start latency by **58% to 76%**.
+
 ---
 
 ## 16. What this does not prove
@@ -1174,14 +1188,17 @@ pgcache-multi-tenant/
 │   └── docker-compose.yml           laptop setup (shape, not magnitudes)
 ├── sql/
 │   ├── 01-schema.sql                7 tables, seed, ORM-style indexes
-│   └── 02-tenant.sql                tenant_id denormalisation + indexes
+│   ├── 02-tenant.sql                tenant_id denormalisation + indexes
+│   └── 03-fair-tuning.sql           GIN pg_trgm + covering B-Tree indexes for Fair Benchmark
 ├── workload/
 │   ├── dashboard.sql                the 8-statement operational request
 │   ├── write.sql                    the write, with :wtenants
 │   ├── complex-search.sql           4-statement ILIKE '%...%' + JOIN search workload
+│   ├── complex-search-fair.sql      4-statement 3+ char ILIKE '%...%' search (GIN pg_trgm)
 │   ├── complex-joins.sql            4-statement 4-to-6 table JOIN & LEFT JOIN workload
 │   ├── complex-analytics.sql        4-statement GROUP BY / FILTER / CASE / HAVING workload
-│   └── complex-dashboard.sql        unified 8-statement complex analytics & search screen
+│   ├── complex-dashboard.sql        unified 8-statement complex analytics & search screen
+│   └── complex-dashboard-dynamic.sql 8-statement screen with 4,000 dynamic intra-tenant shapes
 ├── scripts/
 │   ├── lib.sh                       scrape, run, warm_until_settled, reset_pgcache, cell
 │   ├── 00-setup.sh                  apply schema, copy workload into the pod
@@ -1190,6 +1207,8 @@ pgcache-multi-tenant/
 │   ├── 03-write-sweep.sh
 │   ├── 04-complex-sweep.sh          complex scenario, tenant, client & write sweeps
 │   ├── 05-endurance-90m.sh          1h30m endurance & resource offload campaign (30+30m read, 15+15m R/W)
+│   ├── 06-fair-benchmark.sh         Fair Benchmark (Tuned Origin vs PgCache + Dynamic Filters)
+│   ├── 07-admission-threshold-sweep.sh ADMISSION_THRESHOLD (1, 2, 4) & Cold-Start sweep
 │   ├── deploy-monitoring.sh         deploys Grafana Cloud telemetry stack to Kubernetes
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
 │   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
@@ -1203,7 +1222,8 @@ pgcache-multi-tenant/
     ├── 0.6.3/                       results for PgCache 0.6.3
     ├── 0.6.4/                       results for PgCache 0.6.4
     ├── 0.7.0/                       results for PgCache 0.7.0
-    ├── 0.7.1/                       results & complex scenarios for PgCache 0.7.1
+    ├── 0.7.1/                       Part 1 results & complex scenarios for PgCache 0.7.1
+    ├── 0.7.1_v2/                    Part 2 Fair Benchmark, Dynamic Filters & ADMISSION_THRESHOLD study
     ├── endurance-90m/               1h30m endurance & Origin resource offload runbook
     └── tuned/                       tuned network & engine profile results
 ```

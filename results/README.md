@@ -12,7 +12,8 @@ Before reading the numbers, check out the [**Workload Architecture & SQL Catalog
 - **Complex Enterprise Screens**: [`workload/complex-search.sql`](../workload/complex-search.sql) (`ILIKE '%...%'` search), [`workload/complex-joins.sql`](../workload/complex-joins.sql) (4–6 table `INNER`/`LEFT JOIN`), [`workload/complex-analytics.sql`](../workload/complex-analytics.sql) (`GROUP BY / HAVING`), [`workload/complex-dashboard.sql`](../workload/complex-dashboard.sql) (8-query unified screen), and [`workload/complex-dashboard-zipfian.sql`](../workload/complex-dashboard-zipfian.sql) (80/20 Pareto traffic).
 
 ### Quick Navigation
-- [**PgCache 0.7.1 — Multi-Trial (`TRIALS=5`) & Complex Enterprise Scenarios**](0.7.1/README.md) *(Recommended starting point)*
+- [**PgCache 0.7.1 (Part 1) — Multi-Trial (`TRIALS=5`) & Complex Enterprise Scenarios**](0.7.1/README.md) *(Recommended starting point)*
+- [**PgCache 0.7.1_v2 (Part 2) — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study**](0.7.1_v2/README.md) *(Tuned Origin with `GIN pg_trgm` + Covering B-Trees, Dynamic Intra-Tenant Filters, and PgCache Core Developer Feedback)*
 - [**1h30m Endurance & Database Offload Test (`SCALE=20`, ~10 GB)**](endurance-90m/README.md)
 - [**Network & Engine Tuning Comparison (`0.7.0` Tuned)**](tuned/README.md)
 - Historical Releases: [**0.6.3**](0.6.3/README.md) · [**0.6.4**](0.6.4/README.md) · [**0.7.0**](0.7.0/README.md)
@@ -76,7 +77,8 @@ When we scale concurrent users on the heavy enterprise screen (`complex-dashboar
 
 ## 4. Folder Guide
 
-- [`0.7.1/`](0.7.1/README.md): Full write-up and raw logs for **PgCache 0.7.1** (5-trial statistical runs, complex scenarios, 80/20 Pareto scaling, and live write tests).
+- [`0.7.1/`](0.7.1/README.md): Full write-up and raw logs for **PgCache 0.7.1 (Part 1)** (5-trial statistical runs, complex scenarios, 80/20 Pareto scaling, and live write tests).
+- [`0.7.1_v2/`](0.7.1_v2/README.md): **PgCache 0.7.1_v2 (Part 2)** — The "Fair Benchmark" against a fully tuned Origin (`GIN pg_trgm` + Covering B-Trees + `work_mem=64MB`), dynamic intra-tenant filters (`complex-dashboard-dynamic.sql`), and the `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) + Internal Pass-Through Warm-Up investigation based on PgCache core developer feedback.
 - [`endurance-90m/`](endurance-90m/README.md): **1h30m Endurance & Resource Offload Test** on a ~10 GB dataset (`54.5M` rows), showing how offloading reads to PgCache cuts PostgreSQL write latency in half (`227 ms → 103 ms`).
 - [`tuned/`](tuned/README.md): Side-by-side comparison of default vs. tuned Linux network stack (`tcp_tw_reuse`, VirtIO RPS, direct node IP routing).
 - [`0.6.3/`](0.6.3/README.md), [`0.6.4/`](0.6.4/README.md), [`0.7.0/`](0.7.0/README.md): Historical baseline runs.

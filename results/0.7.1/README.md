@@ -1,6 +1,6 @@
 # Benchmarking PgCache 0.7.1 in a Multi-Tenant SaaS: What Actually Happens on a 3-Node Cloud Cluster
 
-> 🇧🇷 **[Ler em português](README-pt.md)**
+> 🇧🇷 **[Ler em português](README-pt.md)** · 🚀 **[Read Part 2 (`results/0.7.1_v2/`): The "Fair Benchmark" (`2 GiB` Prewarmed Origin + `GIN pg_trgm`), Dynamic User Filters, & `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) Study](../0.7.1_v2/README.md)**
 
 Does putting a read-cache proxy in front of PostgreSQL actually make a multi-tenant SaaS faster — and where does it hit its limits?
 
@@ -43,6 +43,8 @@ Instead of firing single isolated queries, each `pgbench` transaction simulates 
 4. **Where the Cache Struggles (Cold Start Under Heavy Writes)**:
    - When warmed first, PgCache handles 5%–10% write traffic cleanly (**63%–75% hit rate**).
    - However, if you restart the cache **completely cold** while simultaneously bombarding the database with both `UPDATE orders` and `INSERT INTO order_item` ([`write.sql`](../../workload/write.sql)), replication invalidations fight against initial cache population and throughput drops below PostgreSQL (**-85%**). Always warm your read working set before cutting over heavy mixed read/write traffic.
+5. **Follow-Up in Part 2 ([`results/0.7.1_v2/`](../0.7.1_v2/README.md))**:
+   - See **[Part 2 (`0.7.1_v2`)](../0.7.1_v2/README.md)** for our follow-up study with a **2 GiB prewarmed + `GIN pg_trgm` tuned PostgreSQL Origin**, **3+ char trigram text search (`search_3c`)**, **dynamic intra-tenant user filters (`cplx_dyn`)**, and an empirical sweep of **`ADMISSION_THRESHOLD = 1` vs `2` vs `4`** based on feedback from James (PgCache core developer).
 
 ---
 
@@ -265,6 +267,7 @@ Full output log: [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
 
 ## 6. Raw Benchmark Files & Logs
 
+- **Part 2 Follow-Up Study (`results/0.7.1_v2/`)**: [`results/0.7.1_v2/README.md`](../0.7.1_v2/README.md)
 - **SQL Workloads & Schema Documentation**: [`workload/README.md`](../../workload/README.md)
 - **5-Trial Multi-Run Logs (with Full Pod Recreation)**:
   - Complex Scenarios (`TRIALS=5`): [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt)

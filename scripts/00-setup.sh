@@ -106,7 +106,7 @@ else
 
   echo "--- copying workload scripts ---"
   kubectl -n "$NS" exec deploy/loadgen -- bash -c 'mkdir -p /tmp/mt'
-  for f in dashboard write complex-search complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian; do
+  for f in dashboard write complex-search complex-search-fair complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian complex-dashboard-dynamic; do
     if [ -f "$HERE/../workload/$f.sql" ]; then
       kubectl -n "$NS" exec -i deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$HERE/../workload/$f.sql"
     fi

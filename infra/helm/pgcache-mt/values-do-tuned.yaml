@@ -80,7 +80,9 @@ pgcache:
   resources:
     requests:
       cpu: "2500m"
-      memory: "5Gi"
+      memory: "4Gi"
+    limits:
+      memory: "5200Mi"
 
 loadgen:
   resources:

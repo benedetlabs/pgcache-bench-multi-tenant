@@ -40,6 +40,8 @@ This directory contains all `pgbench` SQL workload scripts used to benchmark **P
 | [`complex-analytics.sql`](complex-analytics.sql) | 4 | All 7 tables | Multi-dimensional `GROUP BY`, `FILTER (WHERE ...)`, `CASE WHEN` ticket buckets, `HAVING` thresholds | `04-complex-sweep.sh scenarios` |
 | [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | All 7 tables | Unified enterprise screen combining 3 analytical rollups, 3 deep `JOIN`/`LEFT JOIN` views, and 2 `ILIKE` searches (Uniform tenant selection) | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
 | [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) | 8 | All 7 tables | Same 8-statement enterprise screen using realistic **Pareto 80/20 (`random_zipfian(1, :tenants, 1.07)`)** tenant selection | `04-complex-sweep.sh` (`scenarios`, `zipfian`) |
+| [`complex-search-fair.sql`](complex-search-fair.sql) | 4 | All 7 tables | 3+ character `ILIKE '%...%'` substring search (`cust10..19`, `product 10..19`, `seller10..19`, `number 10..19`) enabling PostgreSQL `GIN pg_trgm` trigram indexes | `06-fair-benchmark.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README.md)) |
+| [`complex-dashboard-dynamic.sql`](complex-dashboard-dynamic.sql) | 8 | All 7 tables | Enterprise screen with 4 dynamic intra-tenant filters (4 status values × 3 price tiers × 10 categories × 5 rating thresholds + 10 3-char search needles = 4,000 shapes) | `06-fair-benchmark.sh`, `07-admission-threshold-sweep.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README.md)) |
 
 ---
 
