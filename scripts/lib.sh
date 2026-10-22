@@ -282,10 +282,24 @@ reset_all_pods() {
 # ── Ensure Workload Scripts ────────────────────────────────────────────────
 ensure_workload_scripts() {
   if [ "$BENCH_ENV" = "k8s" ] && [ "${WORKLOAD_SCRIPTS_READY:-0}" != "1" ]; then
-    kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null || true
+    local tries=0
+    while [ $tries -lt 5 ]; do
+      if kubectl -n "$NS" exec -c bench deploy/loadgen -- mkdir -p /tmp/mt 2>/dev/null; then
+        break
+      fi
+      tries=$((tries + 1))
+      sleep 2
+    done
     for f in dashboard write complex-search complex-search-fair complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian complex-dashboard-dynamic; do
       if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
-        kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null || true
+        tries=0
+        while [ $tries -lt 5 ]; do
+          if kubectl -n "$NS" exec -i -c bench deploy/loadgen -- bash -c "cat > /tmp/mt/$f.sql && [ -s /tmp/mt/$f.sql ]" < "$REPO_ROOT/workload/$f.sql" 2>/dev/null; then
+            break
+          fi
+          tries=$((tries + 1))
+          sleep 2
+        done
       fi
     done
     WORKLOAD_SCRIPTS_READY=1

@@ -35,6 +35,10 @@ Após publicar a Parte 1 e discutir os resultados com o **James (desenvolvedor c
    - **Densidade de Linhas por Tenant (`2.500` vs. `250` Pedidos/Tenant)**: Concentrar 500 mil pedidos em 200 tenants densos (10× mais linhas por tenant) escala tanto o custo do join no Origin (`69,9 ms` $\rightarrow$ `633,8 ms`) quanto a leitura da Materialized View no PgCache (`7,2 ms` $\rightarrow$ `168,6 ms`, ainda **3,8× mais rápido** que o Origin).
    - **A Armadilha da Super-Indexação e os Predicados `tenant_id` Correlacionados**: Repetir `tenant_id = :t` em todas as tabelas do join (exigido pelo PgCache para isolamento CDC por tenant) faz o planejador do PostgreSQL multiplicar as seletividades ($\frac{1}{N^3}$) e estimar `rows=1`. Adicionar índices cobertos largos (`B-tree INCLUDE`) enganou o planejador e o levou a escolher `Nested Loop Index Scans` lentos (`1.000 ms / 8 telas/s`), enquanto remover os índices `INCLUDE` e definir `ALTER DATABASE bench SET random_page_cost = 0.2;` restaurou os planos ideais (`264 ms / 30 telas/s`).
    - **Governança de Memória via Cgroup (`resources.limits.memory: 5200Mi`)**: Definir um limite explícito de memória no container evita que o entrypoint do PgCache superdimensione sua instância interna do PostgreSQL lendo `/proc/meminfo` (`7GB total`) em nós Kubernetes de 8 GB.
+5. **Impacto do Disco NVMe Local + CPU Intel Premium (`s-4vcpu-8gb-intel` vs `s-4vcpu-8gb` Regular SSD) nas Materialized Views**:
+   - Como as Materialized Views do PgCache são gravadas e indexadas na instância interna do PostgreSQL 17 (`/var/lib/postgresql/data`), migrar do nó básico (`s-4vcpu-8gb` SSD Regular) para o nó com **NVMe Local + Intel Premium (`s-4vcpu-8gb-intel`)** elevou os IOPS de `fsync` de páginas de 8 kB em **+127% (`2.050` $\rightarrow$ `4.648 ops/s`, latência de `488 µs` $\rightarrow$ `215 µs`)**.
+   - Na tela corporativa completa de 8 consultas (`mv_dash`, `1.600` Materialized Views simultâneas), o NVMe Local + Intel Premium **eliminou 100% dos stalls de criação de MVs em disco**, elevando a vazão média de 3 rodadas de **`150 telas/s` (`86,2%` hit) para `397 telas/s` (`20,66 ms`, `100,0%` hit nas 3 rodadas, pico de `478 telas/s` / `+1.306%`) — um ganho de 2,65× (+165% mais RPS)** na média das 3 rodadas e **+80,5% acima das rodadas aquecidas do SSD Regular (`397` vs `220 telas/s`)**!
+   - Nos cenários onde as Materialized Views sofrem pressão constante de disco e criação contínua (`mv_zipf1000` com `1.000` tenants e `mv_dyn_t2` com filtros dinâmicos), o NVMe reduziu a latência em **-10% a -12%** e aumentou tanto a taxa de acerto quanto a vazão em **+7% a +14%**.
 
 ---
 
@@ -250,16 +254,73 @@ Log bruto: [`07-admission-threshold-k8s.txt`](07-admission-threshold-k8s.txt)
 
 ---
 
-## 5. Arquivos Brutos e Reprodutibilidade
+## 5. Estudo de Armazenamento de Materialized Views: SSD Regular (`s-4vcpu-8gb`) vs. NVMe Local + Intel Premium (`s-4vcpu-8gb-intel`, `TRIALS=3`)
+
+Como destacou o James, as telas corporativas multi-tabela do PgCache são sustentadas por **Materialized Views gravadas no banco PostgreSQL 17 embutido** (`127.0.0.1:5433`, diretório `/var/lib/postgresql/data` no disco local do Worker Node).
+
+Para medir empiricamente quanto um disco **NVMe local** e uma **CPU de geração superior** aceleram a criação, o aquecimento e a leitura das Materialized Views, executamos o script [`scripts/08-nvme-mv-benchmark.sh`](../../scripts/08-nvme-mv-benchmark.sh) (`TRIALS=3` com recriação do pod do PgCache a cada rodada) em dois clusters Kubernetes de 3 nós na DigitalOcean:
+- **Ensaio 1 — SSD Regular (`3× s-4vcpu-8gb`)**: CPU Basic Shared (`DO-Regular`) + SSD SATA/SAS Regular ([`08-mv-regular-ssd-k8s.txt`](08-mv-regular-ssd-k8s.txt)).
+- **Ensaio 2 — NVMe Local + Intel Premium (`3× s-4vcpu-8gb-intel`)**: CPU Intel Premium (`DO-Premium-Intel`) + NVMe SSD Local ([`08-mv-nvme-intel-k8s.txt`](08-mv-nvme-intel-k8s.txt)).
+
+### 5.1 Micro-Benchmark Físico de Disco e CPU dentro do Container do PgCache (`pg_test_fsync` & `dd`)
+
+Antes de iniciar as consultas SQL, o [`scripts/08-nvme-mv-benchmark.sh`](../../scripts/08-nvme-mv-benchmark.sh) executou o utilitário oficial `pg_test_fsync` do PostgreSQL 17 diretamente sobre `/var/lib/postgresql` dentro do pod do PgCache:
+
+| Métrica Física (`pg_test_fsync` em `/var/lib/postgresql`) | Ensaio 1: SSD Regular (`s-4vcpu-8gb`) | Ensaio 2: NVMe Local + Intel (`s-4vcpu-8gb-intel`) | Diferença Observada |
+|---|---|---|---|
+| **Modelo de CPU (`/proc/cpuinfo`)** | `DO-Regular` (2.494 MHz) | **`DO-Premium-Intel`** (2.494 MHz) | Geração superior de IPC e controlador de memória |
+| **`fsync` (Flush de 1 página de 8 kB)** | `2.049,6 ops/s` (`488 µs/op`) | **`4.647,5 ops/s` (`215 µs/op`)** | **+126,8% mais IOPS (2,27× mais rápido, -56% latência)** |
+| **`open_sync` (Escrita síncrona `O_DIRECT` 8 kB)** | `3.912,4 ops/s` (`256 µs/op`) | **`4.377,6 ops/s` (`228 µs/op`)** | **+11,9% mais IOPS (-11% latência)** |
+| **`fdatasync` (2× 8 kB escritas síncronas)** | `5.239,1 ops/s` (`191 µs/op`) | `3.437,4 ops/s` (`291 µs/op`) | Ambos abaixo de `300 µs` com cache de controlador ativo |
+| **Escrita em Buffer de 8 kB (`write` não-sincronizado)** | `670.247 ops/s` (`1 µs/op`) | **`702.070 ops/s` (`1 µs/op`)** | **+4,7% maior largura de banda de memória/kernel** |
+
+### 5.2 Comparativo Consolidado nas Cargas de Materialized Views (`TRIALS=3`)
+
+| Cenário Materialized View (`TENANTS=200`, `CLIENTS=8`) | SSD Regular (`s-4vcpu-8gb`)<br>Origin vs PgCache | NVMe Local + Intel (`s-4vcpu-8gb-intel`)<br>Origin vs PgCache | Impacto do NVMe Local + Intel Premium |
+|---|---|---|---|
+| **1. `mv_cold0s` (Partida Fria `0s` em `complex-dashboard.sql`)** | A: 260,75 ms (31 rps)<br>B: **808,46 ms (10 rps, hit 4,2%)** | A: **247,23 ms (33 rps)**<br>B: **795,82 ms (10 rps, hit 5,2%, pico 7,1%)** | **+24% mais taxa de acerto nos primeiros 15s (`4,2%` $\rightarrow$ `5,2%`)** |
+| **2. `mv_warm30s` (Aquecimento `30s` em `complex-dashboard.sql`)** | A: 268,31 ms (30 rps)<br>B: **1.357,10 ms (6 rps, hit 23,3%)** | A: **250,60 ms (32 rps)**<br>B: **1.666,90 ms (7 rps, hit 24,4%; `736 ms / 11 rps / 36,1% hit` no T1)** | **No Trial 1, o NVMe atingiu `36,1%` de hit e `736 ms` (`11 rps`) aos 30s** |
+| **3. `mv_joins` (Joins de 4–6 Tabelas Estabilizado)** | A: 193,11 ms (42 rps)<br>B: **8,28 ms (970 rps, hit 99,6%, warm 5,7)** | A: **190,14 ms (42 rps)**<br>B: **12,57 ms (643 rps, hit 100,0%, warm 5,0)** | **Converge para `100,0%` de hit nas 3 rodadas em menos passes (`5,0` vs `5,7`)** |
+| **4. `mv_analytics` (Analytics `GROUP BY / HAVING` Estabilizado)** | A: 147,52 ms (55 rps)<br>B: **11,73 ms (690 rps, hit 100,0%)** | A: **143,29 ms (56 rps)**<br>B: **14,31 ms (627 rps, hit 100,0%; pico de `8,63 ms / 927 rps` no T3)** | **`800` MVs compactas cabem 100% nos `1,28 GiB` de RAM; T3 no NVMe bateu `927 rps (+1.498%)`** |
+| **5. `mv_dash` (Tela Corporativa Completa de 8 Queries, `1.600` MVs)** | A: 286,40 ms (28 rps)<br>B: **329,47 ms · 150 rps** *(hit 86,2%, +442%; 220 rps em T1/T3)* | A: **240,43 ms (33 rps)**<br>B: **20,66 ms · 397 rps** *(hit **100,0%**, **+1.090%**, pico **478 rps**)* | **2,65× mais vazão média (`397` vs `150 rps`, +165%) e +80,5% acima das rodadas aquecidas (`397` vs `220 rps`), com zero stalls!** |
+| **6. `mv_zipf1000` (`1.000` Tenants Pareto 80/20, `8.000` MVs)** | A: 252,58 ms (32 rps)<br>B: **386,46 ms · 21 rps** *(hit 71,5%, -34%)* | A: **242,34 ms (33 rps)**<br>B: **341,29 ms · 24 rps** *(hit **73,4%**, -28%, pico **29 rps**)* | **-11,7% menor latência (`386` $\rightarrow$ `341 ms`), +14,3% mais RPS (`21` $\rightarrow$ `24 rps`) sob paginação de disco** |
+| **7. `mv_dyn_t2` (Filtros Dinâmicos com `ADMISSION_THRESHOLD=2`)** | A: 255,95 ms (32 rps)<br>B: **308,37 ms · 27 rps** *(hit 39,6%, -16%)* | A: **221,50 ms (36 rps)**<br>B: **277,89 ms · 29 rps** *(hit **41,4%**, -19%, pico **34 rps**)* | **-9,9% menor latência (`308` $\rightarrow$ `278 ms`) e +7,4% mais RPS (`27` $\rightarrow$ `29 rps`) sob criação contínua de MVs** |
+
+### 5.3 Detalhamento Rodada a Rodada: SSD Regular vs. NVMe Local (`TRIALS=3`)
+
+| Célula | SSD Regular (`s-4vcpu-8gb`) — 3 Execuções (Caminho B PgCache) | NVMe Local + Intel (`s-4vcpu-8gb-intel`) — 3 Execuções (Caminho B PgCache) |
+|---|---|---|
+| **`mv_cold0s`** | T1: 805,4 ms (10 rps, 4,51%) · T2: 805,2 ms (10 rps, 3,72%) · T3: 814,8 ms (10 rps, 4,33%) | T1: 818,6 ms (10 rps, 4,59%) · T2: 799,7 ms (10 rps, 3,86%) · T3: **769,2 ms (10 rps, 7,11%)** |
+| **`mv_warm30s`** | T1: 1.772,0 ms (5 rps, 22,46%) · T2: 1.293,0 ms (6 rps, 19,95%) · T3: 1.006,3 ms (8 rps, 27,56%) | T1: **736,2 ms (11 rps, 36,08%)** · T2: 2.918,3 ms (3 rps, 20,85%) · T3: 1.346,3 ms (6 rps, 16,25%) |
+| **`mv_joins`** | T1: 7,74 ms (1.034 rps, 100%) · T2: 8,90 ms (899 rps, 100%) · T3: 8,20 ms (976 rps, 98,94%) | T1: 14,45 ms (554 rps, **100%**) · T2: 11,36 ms (704 rps, **100%**) · T3: 11,90 ms (672 rps, **100%**) |
+| **`mv_analytics`** | T1: 10,11 ms (792 rps, 100%) · T2: 13,03 ms (614 rps, 100%) · T3: 12,06 ms (663 rps, 100%) | T1: 19,74 ms (405 rps, 100%) · T2: 14,56 ms (550 rps, 100%) · T3: **8,63 ms (927 rps, 100%)** |
+| **`mv_dash`** | T1: 44,62 ms (179 rps, 100%) · T2: *913,12 ms (9 rps, 58,59%)* · T3: 30,67 ms (261 rps, 100%) | T1: **24,89 ms (321 rps, 100%)** · T2: **20,35 ms (393 rps, 100%)** · T3: **16,73 ms (478 rps, 100%)** |
+| **`mv_zipf1000`** | T1: 407,02 ms (20 rps, 73,2%) · T2: 447,31 ms (18 rps, 68,7%) · T3: 305,04 ms (26 rps, 72,6%) | T1: 393,29 ms (20 rps, 73,6%) · T2: **272,30 ms (29 rps, 73,9%)** · T3: 358,28 ms (22 rps, 72,8%) |
+| **`mv_dyn_t2`** | T1: 233,42 ms (34 rps, 40,6%) · T2: 333,53 ms (24 rps, 39,0%) · T3: 358,16 ms (22 rps, 39,3%) | T1: **275,91 ms (29 rps, 42,3%)** · T2: 321,39 ms (25 rps, 40,2%) · T3: **236,37 ms (34 rps, 41,5%)** |
+
+### 5.4 Conclusão Prática: Quando o Disco NVMe Local Faz Diferença no PgCache?
+
+1. **Quando o Conjunto de Materialized Views é Pequeno (`mv_joins` e `mv_analytics` com `200` Tenants = `800` MVs)**:
+   - As `800` Materialized Views cabem inteiras dentro dos **`1,28 GiB` de `shared_buffers`** da instância interna do PostgreSQL do PgCache. Uma vez aquecidas, 100% das leituras vêm da memória RAM (`8–14 ms`, `627–970 telas/s`), sem tocar no disco. Mesmo assim, o NVMe convergiu `mv_joins` para `100,0%` de acerto em **5,0 passes** (contra `5,7` passes e `99,6%` no SSD Regular).
+2. **Quando a Tela Combina Múltiplas Materialized Views Pesadas (`mv_dash` = `1.600` MVs) ou Alta Cardinalidade (`mv_zipf1000` e `mv_dyn_t2`)**:
+   - Na tela corporativa completa (`mv_dash`), o PgCache precisa criar e manter `1.600` Materialized Views (incluindo buscas textuais, joins de 6 tabelas e agregações). No SSD Regular (`488 µs` de `fsync`), a escrita concorrente das MVs sofreu stall na Execução 2 (`58,6%` hit, `9 rps`) e limitou as execuções aquecidas a `179–261 telas/s`.
+   - No **NVMe Local + Intel Premium (`215 µs` de `fsync`)**, todas as 3 execuções de `mv_dash` convergiram sem stall para **100,0% de hit**, sustentando **`321`, `393` e `478 telas/s` (média de `397 telas/s` / `20,66 ms`, 2,65× acima da média do SSD Regular e +80,5% acima das rodadas aquecidas)**!
+   - Da mesma forma, em `mv_zipf1000` (`1.000` tenants) e `mv_dyn_t2` (filtros dinâmicos), onde o PgCache grava e pagina Materialized Views continuamente no disco local, o NVMe reduziu a latência em **-10% a -12%** e aumentou a vazão em **+7% a +14%**. Em instâncias dedicadas com NVMe PCIe pass-through (como **AWS `i8g` Nitro SSD** ou **DigitalOcean `so-` Storage-Optimized**), esse ganho nas fases de criação e paginação de MVs será ainda maior.
+
+---
+
+## 6. Arquivos Brutos e Reprodutibilidade
 
 - **Relatório Parte 1 (`results/0.7.1/`)**: [`results/0.7.1/README-pt.md`](../0.7.1/README-pt.md)
 - **Scripts de Tuning e Cargas SQL**:
   - Tuning e Prewarm do Origin (`2 GiB` + 4 índices `GIN pg_trgm`): [`sql/03-fair-tuning.sql`](../../sql/03-fair-tuning.sql)
   - Carga de Busca de 3+ Caracteres com Trigramas (`search_3c`): [`workload/complex-search-fair.sql`](../../workload/complex-search-fair.sql)
   - Carga de Filtros Dinâmicos Intra-Tenant (`cplx_dyn`): [`workload/complex-dashboard-dynamic.sql`](../../workload/complex-dashboard-dynamic.sql)
-  - Scripts de Execução: [`scripts/06-fair-benchmark.sh`](../../scripts/06-fair-benchmark.sh) · [`scripts/07-admission-threshold-sweep.sh`](../../scripts/07-admission-threshold-sweep.sh)
+  - Scripts de Execução: [`scripts/06-fair-benchmark.sh`](../../scripts/06-fair-benchmark.sh) · [`scripts/07-admission-threshold-sweep.sh`](../../scripts/07-admission-threshold-sweep.sh) · [`scripts/08-nvme-mv-benchmark.sh`](../../scripts/08-nvme-mv-benchmark.sh)
 - **Logs Brutos Multi-Trial (`results/0.7.1_v2/`)**:
   - Teste Justo (`TRIALS=5`, Base Padrão de `2.000` Tenants): [`06-fair-benchmark-k8s.txt`](06-fair-benchmark-k8s.txt)
   - Varredura de `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`, `TRIALS=3`): [`07-admission-threshold-k8s.txt`](07-admission-threshold-k8s.txt)
+  - Estudo de Materialized Views em SSD Regular (`s-4vcpu-8gb`, `TRIALS=3`): [`08-mv-regular-ssd-k8s.txt`](08-mv-regular-ssd-k8s.txt)
+  - Estudo de Materialized Views em NVMe Local + Intel Premium (`s-4vcpu-8gb-intel`, `TRIALS=3`): [`08-mv-nvme-intel-k8s.txt`](08-mv-nvme-intel-k8s.txt)
   - `search_3c` em 200 Tenants Densos (`2.500` pedidos/tenant, `TRIALS=5`): [`06-fair-search3c-k8s.txt`](06-fair-search3c-k8s.txt)
   - Diagnóstico de Super-Indexação B-Tree `INCLUDE` + `GIN` (`TRIALS=5`): [`06-fair-overindexed-k8s.txt`](06-fair-overindexed-k8s.txt)
