@@ -75,11 +75,36 @@ spec:
               for f in /sys/class/net/eth*/queues/rx-*/rps_cpus; do
                 echo "f" > "$f" 2>/dev/null || true
               done
+              {{- if .Values.pgcache.useBlockStorage }}
+              rm -rf /var/lib/postgresql/data/pgdata /var/lib/postgresql/data/lost+found 2>/dev/null || true
+              chmod 0777 /var/lib/postgresql/data 2>/dev/null || true
+              {{- end }}
+          {{- if .Values.pgcache.useBlockStorage }}
+          volumeMounts:
+            - name: pgcache-data
+              mountPath: /var/lib/postgresql/data
+          {{- end }}
       {{- end }}
       containers:
         - name: pgcache
           image: "{{ .Values.image.pgcache.repository }}:{{ .Values.image.pgcache.tag }}"
           imagePullPolicy: {{ .Values.image.pgcache.pullPolicy }}
+          securityContext:
+            privileged: true
+          {{- if .Values.pgcache.constrainEmbeddedPg }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              mkdir -p /var/lib/postgresql/data
+              rm -rf /var/lib/postgresql/data/pgdata /var/lib/postgresql/data/lost+found 2>/dev/null || true
+              chown -R postgres:postgres /var/lib/postgresql/data 2>/dev/null || true
+              sed -e 's/TOTAL_MEM=$(memory_detect)/TOTAL_MEM=536870912/' \
+                  -e 's/pg_conf_set port 5433/pg_conf_set port 5433\n    pg_conf_set max_connections 500/' \
+                  /usr/local/bin/pgcache-entrypoint.sh > /tmp/pgcache-entrypoint.sh
+              chmod +x /tmp/pgcache-entrypoint.sh
+              exec /tmp/pgcache-entrypoint.sh
+          {{- end }}
           env:
             - name: UPSTREAM_URL
               value: {{ .Values.pgcache.upstreamUrl | default (printf "postgres://%s:%s@origin.%s.svc.cluster.local:5432/%s" .Values.origin.user .Values.origin.password .Release.Namespace .Values.origin.database) | quote }}
@@ -119,8 +144,31 @@ spec:
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
+            {{- if .Values.pgcache.useBlockStorage }}
+            - name: pgcache-data
+              mountPath: /var/lib/postgresql/data
+            {{- end }}
       volumes:
         - name: dshm
           emptyDir:
             medium: Memory
             sizeLimit: 6Gi
+        {{- if .Values.pgcache.useBlockStorage }}
+        - name: pgcache-data
+          persistentVolumeClaim:
+            claimName: pgcache-data
+        {{- end }}
+{{- if .Values.pgcache.useBlockStorage }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgcache-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.origin.storage.storageClassName | default "do-block-storage" | quote }}
+  resources:
+    requests:
+      storage: 20Gi
+{{- end }}
