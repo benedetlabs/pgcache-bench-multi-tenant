@@ -163,10 +163,28 @@ Como o James destacou, o PgCache atende às consultas multi-tabela usando Materi
 - Quando testamos adicionar **6 índices cobertos largos (`B-tree INCLUDE`)** junto com os 4 índices `GIN pg_trgm` na base densa de 200 tenants (registrado em [`06-fair-overindexed-k8s.txt`](06-fair-overindexed-k8s.txt)), essa subestimativa `rows=1` enganou o planejador do PostgreSQL, fazendo-o abandonar planos rápidos de `Hash Join` / `Bitmap Heap Scan` em troca de `Nested Loop Index Scans` profundos (`cplx_dash` rodou a `1.000,3 ms / 8 telas/s` no Origin, e `search_3c` levou `795,4 ms / 10 telas/s` contra `633,8 ms / 13 telas/s` sem os índices `INCLUDE`).
 - Mesmo sem índices `INCLUDE`, o `rows=1` fazia o PostgreSQL escolher `Seq Scan on category` (`cost=1.625`) em vez de `Index Scan using category_pkey` (`cost=2.36`) com `random_page_cost=1.1`; configurar `ALTER DATABASE bench SET random_page_cost = 0.2;` restaurou o `Index Scan` em todas as tabelas de dimensão.
 
-#### Descoberta 3: Governança de Memória via Cgroup para o PostgreSQL Embutido do PgCache (`resources.limits.memory: 5200Mi`)
+#### Descoberta 3: O Problema de Memória no Kubernetes (`Evicted` por `MemoryPressure`) e a Governança via Cgroup (`resources.limits.memory: 5200Mi`)
 
-- Dentro do container do PgCache, o script `pgcache-entrypoint.sh` sobe uma instância embutida do PostgreSQL 17 (`127.0.0.1:5433`, banco `pgcache_cache`) para armazenar as Materialized Views e calibra automaticamente sua memória lendo `/sys/fs/cgroup/memory.max` (usando `/proc/meminfo` do host quando `memory.max` é `max`).
-- Em um nó cloud de 8 GB (`Allocatable: ~6,26 GiB`), deixar `resources.limits.memory` sem limite faz o `pgcache-entrypoint.sh` calibrar o banco interno para `7GB total`, o que sob criação intensa de Materialized Views aciona pressão de memória no Kubelet (`Evicted`). Definir `resources.limits.memory: "5200Mi"` em [`infra/helm/pgcache-mt/values-do-tuned.yaml`](../../infra/helm/pgcache-mt/values-do-tuned.yaml) faz o PgCache calibrar exatamente para `5GB total`, eliminando qualquer despejo de pod.
+Durante as primeiras execuções da carga de filtros dinâmicos (`cplx_dyn`) com `ADMISSION_THRESHOLD=1`, o teste travava no meio da bateria porque o pod do PgCache sofria **`Status: Evicted` (`The node had condition: [MemoryPressure]`)** pelo Kubelet da DigitalOcean. A investigação revelou uma interação crítica entre **três camadas de memória** dentro do container do PgCache:
+
+1. **Por que `MEMORY_LIMIT` sozinho não impedia o `Evicted`**:
+   - A variável de ambiente `MEMORY_LIMIT: "3758096384"` (`3,5 GiB`) controla o rastreador de memória do processo Rust do PgCache (`pgcache_cache_memory_used_bytes`).
+   - Porém, como o próprio James explicou, as Materialized Views das consultas multi-tabela são criadas e armazenadas dentro de uma **instância embutida do PostgreSQL 17** que roda dentro do mesmo container do PgCache (`127.0.0.1:5433`, banco `pgcache_cache`).
+2. **A armadilha do `/sys/fs/cgroup/memory.max = max` no `pgcache-entrypoint.sh`**:
+   - Ao iniciar o container, o script interno `/usr/local/bin/pgcache-entrypoint.sh` calcula automaticamente os parâmetros de memória do PostgreSQL embutido (`shared_buffers`, `effective_cache_size`, `work_mem`) lendo o limite do cgroup em `/sys/fs/cgroup/memory.max`.
+   - Quando o Deployment do Kubernetes **não** define `resources.limits.memory`, o arquivo `/sys/fs/cgroup/memory.max` retorna `max`. Nesse caso, o `pgcache-entrypoint.sh` faz fallback para a RAM física bruta da máquina virtual (`/proc/meminfo` = `8 GB`) e imprime no log de inicialização:
+     ```text
+     [entrypoint] PostgreSQL tuned for 7GB total (shared_buffers=1792MB, effective_cache_size=5376MB, work_mem=8MB, workers=4)
+     ```
+   - O problema é que, em um nó Kubernetes de 8 GB (`s-4vcpu-8gb`), o sistema operacional, o Kubelet, o Cilium (CNI) e o containerd reservam ~1,7 GiB, deixando apenas **`Allocatable: ~6,26 GiB` (`6.568.452 KiB`)** para todos os pods do nó.
+   - Quando o `cplx_dyn` criava centenas de Materialized Views em sequência, a soma de **PostgreSQL embutido (`shared_buffers=1792MB` + page cache das MVs em disco) + processo Rust do PgCache (`3,5 GiB`)** ultrapassava os `6,26 GiB` disponíveis no nó, fazendo o Kubelet matar o pod com `Evicted` (`MemoryPressure`).
+3. **A Solução Definitiva (`resources.limits.memory: 5200Mi`)**:
+   - Ao declarar explicitamente `resources.limits.memory: "5200Mi"` em [`infra/helm/pgcache-mt/values-do-tuned.yaml`](../../infra/helm/pgcache-mt/values-do-tuned.yaml) e [`infra/helm/pgcache-mt/templates/pgcache.yaml`](../../infra/helm/pgcache-mt/templates/pgcache.yaml), o cgroup passa a expor `5.452.595.200` bytes em `/sys/fs/cgroup/memory.max`.
+   - O `pgcache-entrypoint.sh` detecta automaticamente o limite do container e recalibra o PostgreSQL interno para caber com folga dentro do nó:
+     ```text
+     [entrypoint] PostgreSQL tuned for 5GB total (shared_buffers=1280MB, effective_cache_size=3840MB, work_mem=6MB, workers=4)
+     ```
+   - Além disso, o kernel Linux passa a reciclar o page cache das Materialized Views dentro do próprio cgroup de `5200Mi` antes que o consumo chegue ao limiar de `MemoryPressure` do Kubelet (`6,26 GiB`), **eliminando 100% das quedas e despejos (`0 Evictions`)** em todas as baterias `06` e `07`.
 
 ---
 

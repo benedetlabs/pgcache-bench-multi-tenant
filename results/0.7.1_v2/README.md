@@ -163,10 +163,28 @@ As James noted, PgCache backs heavy multi-table queries with internal Materializ
 - When we initially tested adding **6 wide B-tree `INCLUDE` covering indexes** alongside the 4 `GIN pg_trgm` indexes on the 200-tenant-dense dataset (logged in [`06-fair-overindexed-k8s.txt`](06-fair-overindexed-k8s.txt)), that `rows=1` underestimate tricked PostgreSQL into abandoning fast `Hash Join` / `Bitmap Heap Scan` plans in favor of deep nested-loop index scans (`cplx_dash` ran at `1,000.3 ms / 8 req/s` on Origin, and `search_3c` took `795.4 ms / 10 req/s` vs `633.8 ms / 13 req/s` without the covering indexes).
 - Even without covering indexes, `rows=1` caused PostgreSQL to pick `Seq Scan on category` (`cost=1.625`) over `Index Scan using category_pkey` (`cost=2.36`) when `random_page_cost=1.1`; setting `ALTER DATABASE bench SET random_page_cost = 0.2;` restored `Index Scan` across all lookup tables.
 
-#### Discovery 3: Cgroup Memory Governance for PgCache's Embedded PostgreSQL (`resources.limits.memory: 5200Mi`)
+#### Discovery 3: The Kubernetes Memory Eviction Problem (`MemoryPressure`) & Cgroup Memory Governance (`resources.limits.memory: 5200Mi`)
 
-- Inside the PgCache container, `pgcache-entrypoint.sh` launches an embedded PostgreSQL 17 instance (`127.0.0.1:5433`, database `pgcache_cache`) to store Materialized Views and auto-tunes its buffer settings by reading `/sys/fs/cgroup/memory.max` (falling back to `/proc/meminfo` when `memory.max` is `max`).
-- On an 8 GB cloud node (`Allocatable: ~6.26 GiB`), leaving `resources.limits.memory` unset causes `pgcache-entrypoint.sh` to auto-tune for `7GB total`, which under heavy Materialized View creation triggers Kubelet node-level memory pressure and pod eviction. Setting `resources.limits.memory: "5200Mi"` in [`infra/helm/pgcache-mt/values-do-tuned.yaml`](../../infra/helm/pgcache-mt/values-do-tuned.yaml) makes PgCache auto-tune cleanly for `5GB total` with zero evictions.
+During our initial runs of the dynamic filter workload (`cplx_dyn`) at `ADMISSION_THRESHOLD=1`, the benchmark repeatedly stalled mid-run because the PgCache pod was terminated by the DigitalOcean Kubelet with **`Status: Evicted` (`The node had condition: [MemoryPressure]`)**. Root-cause analysis uncovered a critical interaction across **three memory layers** inside the PgCache container:
+
+1. **Why `MEMORY_LIMIT` Alone Did Not Prevent Pod Eviction**:
+   - The `MEMORY_LIMIT: "3758096384"` (`3.5 GiB`) environment variable governs the PgCache Rust proxy's internal cache tracker (`pgcache_cache_memory_used_bytes`).
+   - However, as James explained, Materialized Views for heavy multi-table queries are created and stored inside an **embedded PostgreSQL 17 instance** running inside the same PgCache container (`127.0.0.1:5433`, database `pgcache_cache`).
+2. **The `/sys/fs/cgroup/memory.max = max` Auto-Tuning Trap in `pgcache-entrypoint.sh`**:
+   - At container startup, `/usr/local/bin/pgcache-entrypoint.sh` auto-tunes the embedded PostgreSQL instance (`shared_buffers`, `effective_cache_size`, `work_mem`) by reading `/sys/fs/cgroup/memory.max`.
+   - When a Kubernetes Deployment does **not** set `resources.limits.memory`, `/sys/fs/cgroup/memory.max` is `max`. In that case, `pgcache-entrypoint.sh` falls back to the host VM's total physical RAM (`/proc/meminfo` = `8 GB`) and logs:
+     ```text
+     [entrypoint] PostgreSQL tuned for 7GB total (shared_buffers=1792MB, effective_cache_size=5376MB, work_mem=8MB, workers=4)
+     ```
+   - On an 8 GB Kubernetes worker node (`s-4vcpu-8gb`), the Linux kernel, Kubelet, Cilium CNI, and containerd reserve ~1.7 GiB, leaving only **`Allocatable: ~6.26 GiB` (`6,568,452 KiB`)** for pods on that node.
+   - When `cplx_dyn` rapidly created hundreds of Materialized Views, the combined footprint of **embedded PostgreSQL (`shared_buffers=1792MB` + disk page cache for MV files) + PgCache Rust process (`3.5 GiB`)** exceeded the node's `6.26 GiB` allocatable ceiling, causing Kubelet to evict the pod under `MemoryPressure`.
+3. **The Fix (`resources.limits.memory: 5200Mi`)**:
+   - By explicitly setting `resources.limits.memory: "5200Mi"` in [`infra/helm/pgcache-mt/values-do-tuned.yaml`](../../infra/helm/pgcache-mt/values-do-tuned.yaml) and [`infra/helm/pgcache-mt/templates/pgcache.yaml`](../../infra/helm/pgcache-mt/templates/pgcache.yaml), the container cgroup exposes `5,452,595,200` bytes in `/sys/fs/cgroup/memory.max`.
+   - `pgcache-entrypoint.sh` automatically detects the cgroup ceiling and tunes the embedded PostgreSQL instance to fit safely inside the node:
+     ```text
+     [entrypoint] PostgreSQL tuned for 5GB total (shared_buffers=1280MB, effective_cache_size=3840MB, work_mem=6MB, workers=4)
+     ```
+   - In addition, the Linux kernel reclaims disk page cache for Materialized Views within the `5200Mi` cgroup boundary before node-level `MemoryPressure` (`6.26 GiB`) can ever be reached — **eliminating 100% of pod evictions (`0 Evictions`)** across all Sweep 06 and Sweep 07 runs.
 
 ---
 
