@@ -1146,18 +1146,21 @@ Até aqui, o banco cabia inteiro na memória RAM do PostgreSQL (`SCALE=1`). O qu
 - **Bônus Inesperado — As Escritas Ficaram 2,2× Mais Rápidas no PostgreSQL**: Como o PgCache tirou o peso das leituras analíticas das costas do PostgreSQL no Bloco 2, o disco e a CPU do banco principal ficaram livres para gravar transações. O tempo médio de um `UPDATE` caiu pela metade, de **227,0 ms para 102,9 ms**.
 - **Uso de Memória Sob Controle**: Durante toda a 1h30m de teste, o PgCache respeitou o teto de 3,5 GiB de RAM (`3,39 GiB` em uso), com **zero quedas e zero expulsões de memória (evictions)**.
 
-### 15.3 Varreduras 6 e 7 — O "Teste Justo", Filtros Dinâmicos e Estudo de `ADMISSION_THRESHOLD` (`0.7.1_v2`)
+### 15.3 Varreduras 6 a 9 — O "Teste Justo", Filtros Dinâmicos, `ADMISSION_THRESHOLD` e Estudo de Disco SSD vs. NVMe Local (`0.7.1_v2`)
 
-**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh)** ·
+**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh), [`scripts/08-nvme-mv-benchmark.sh`](scripts/08-nvme-mv-benchmark.sh), [`scripts/09-nvme-5gb-stress.sh`](scripts/09-nvme-5gb-stress.sh)** ·
 **Tuning SQL: [`sql/03-fair-tuning.sql`](sql/03-fair-tuning.sql)** ·
-**Cargas: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql)** ·
+**Cargas: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql), [`complex-mv-heavy.sql`](workload/complex-mv-heavy.sql)** ·
 **Relatório Completo: [`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)**
 
-Após publicar a Parte 1, conduzimos um segundo estudo empírico (`0.7.1_v2`) para responder a duas perguntas centrais:
-1. **E se dermos ao PostgreSQL 17 de Origem todas as vantagens justas?** (Índices trigrama `GIN pg_trgm` com buscas de 3+ caracteres, índices compostos B-Tree de cobertura e `work_mem=64MB` + `effective_cache_size=6GB`).
+Após publicar a Parte 1, conduzimos um segundo estudo empírico (`0.7.1_v2`) para responder a três perguntas centrais:
+1. **E se dermos ao PostgreSQL 17 de Origem todas as vantagens justas?** (Índices trigrama `GIN pg_trgm` com buscas de 3+ caracteres, `2 GiB shared_buffers` prewarmed e `work_mem=32MB` + `random_page_cost=0.2`).
 2. **O que acontece sob filtros dinâmicos intra-tenant e aquecimento a frio quando ajustamos o `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) do PgCache?** (Com base na devolutiva arquitetural de James, desenvolvedor principal do PgCache).
+3. **Qual é o impacto real de um disco NVMe Local exclusivamente no `PgCache` para Materialized Views sob pressão real de disco (`SCALE=10`, ~5 GB / 28,5M linhas com `shared_buffers=128MB` e `MEMO_CACHE_SIZE=0`)?**
 
-Consulte **[`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)** para a análise completa em múltiplas rodadas (`TRIALS=5` e `TRIALS=3`), incluindo como o `ADMISSION_THRESHOLD=4` elimina 100% da regressão de `-56%` em filtros dinâmicos (`235,77 ms / 34 telas/s`) e corta a latência de partida a frio em **58% a 76%**.
+Consulte **[`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)** para a análise completa em múltiplas rodadas (`TRIALS=5` e `TRIALS=3`), incluindo:
+- Como o `ADMISSION_THRESHOLD=4` elimina 100% da regressão de `-56%` em filtros dinâmicos (`235,77 ms / 34 telas/s`) e corta a latência de partida a frio em **58% a 76%**.
+- Como isolar o `PgCache` em **NVMe Local** (mantendo o `Origin` em SSD Padrão) sob pressão real de disco em 5 GB reduz a latência em **`3,86×`** nos trials estabilizados de `mv5g_heavy` (superando o Origin em **`+25%`**), reduz a latência em até **`14,17×`** sob hit parcial em `mv5g_dash` (**`+66,7%` a `+100%` sobre o Origin**), e reduz a latência média sob invalidação CDC (`mv5g_cdc9010`) em **`9,66×` (`36.361,7 ms` $\rightarrow$ `3.763,4 ms`, e `60,38×` no pico do Trial 1)**!
 
 ---
 
@@ -1213,7 +1216,8 @@ pgcache-multi-tenant/
 │   ├── complex-joins.sql            4 statements de JOIN e LEFT JOIN em 4 a 6 tabelas
 │   ├── complex-analytics.sql        4 statements de GROUP BY / FILTER / CASE / HAVING
 │   ├── complex-dashboard.sql        tela unificada com 8 statements analíticos e busca
-│   └── complex-dashboard-dynamic.sql tela de 8 statements com 4.000 variações dinâmicas intra-tenant
+│   ├── complex-dashboard-dynamic.sql tela de 8 statements com 4.000 variações dinâmicas intra-tenant
+│   └── complex-mv-heavy.sql         tela de 4 statements com Materialized Views largas (LIMIT 300–500)
 ├── scripts/
 │   ├── lib.sh                       scrape, run, warm_until_settled, reset_pgcache, cell
 │   ├── 00-setup.sh                  aplica o esquema, copia a carga para o pod
@@ -1224,6 +1228,8 @@ pgcache-multi-tenant/
 │   ├── 05-endurance-90m.sh          campanha de 1h30m de longa duração e alívio de recursos (30+30m leitura, 15+15m R/W)
 │   ├── 06-fair-benchmark.sh         Teste Justo (Origem Otimizada vs PgCache + Filtros Dinâmicos)
 │   ├── 07-admission-threshold-sweep.sh Varredura de ADMISSION_THRESHOLD (1, 2, 4) e Cold-Start
+│   ├── 08-nvme-mv-benchmark.sh      Caso 1: Estudo de MVs em SSD Regular vs NVMe Local (SCALE=1)
+│   ├── 09-nvme-5gb-stress.sh        Caso 2: Estudo Isolado de Pressão de Disco em 5 GB (SCALE=10, PgCache SSD vs NVMe)
 │   ├── deploy-monitoring.sh         deploy da stack de telemetria Grafana Cloud no Kubernetes
 │   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
 │   ├── aks-cluster.sh               script automatizado de cluster Azure AKS Spot via Terraform

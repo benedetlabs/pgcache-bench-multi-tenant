@@ -1131,18 +1131,21 @@ Everything up to this point used a database that fit inside PostgreSQL's RAM (`S
 - **Surprise Bonus — Writes Get 2.2× Faster on PostgreSQL**: Because PgCache absorbed the heavy analytical reads in Block 2, PostgreSQL's disk I/O and CPU were freed up to process transactions. Average `UPDATE` latency on PostgreSQL dropped in half, from **227.0 ms down to 102.9 ms**.
 - **Rock-Solid Memory Cap**: Across the entire 90-minute run, PgCache stayed safely under its 3.5 GiB memory limit (`3.39 GiB` used) with **zero evictions and zero crashes**.
 
-### 15.3 Sweeps 6 & 7 — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study (`0.7.1_v2`)
+### 15.3 Sweeps 6 to 9 — The "Fair Benchmark", Dynamic Filters, `ADMISSION_THRESHOLD` & SSD vs. Local NVMe Study (`0.7.1_v2`)
 
-**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh)** ·
+**Drivers: [`scripts/06-fair-benchmark.sh`](scripts/06-fair-benchmark.sh), [`scripts/07-admission-threshold-sweep.sh`](scripts/07-admission-threshold-sweep.sh), [`scripts/08-nvme-mv-benchmark.sh`](scripts/08-nvme-mv-benchmark.sh), [`scripts/09-nvme-5gb-stress.sh`](scripts/09-nvme-5gb-stress.sh)** ·
 **SQL Tuning: [`sql/03-fair-tuning.sql`](sql/03-fair-tuning.sql)** ·
-**Workloads: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql)** ·
+**Workloads: [`complex-search-fair.sql`](workload/complex-search-fair.sql), [`complex-dashboard-dynamic.sql`](workload/complex-dashboard-dynamic.sql), [`complex-mv-heavy.sql`](workload/complex-mv-heavy.sql)** ·
 **Full Report: [`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)**
 
-After publishing Part 1, we conducted a second empirical study (`0.7.1_v2`) to answer two critical questions:
-1. **What if we give Origin PostgreSQL 17 every fair advantage?** (`GIN pg_trgm` trigram indexes with 3+ character search needles, composite covering B-Tree indexes, and `work_mem=64MB` + `effective_cache_size=6GB`).
+After publishing Part 1, we conducted a second empirical study (`0.7.1_v2`) to answer three critical questions:
+1. **What if we give Origin PostgreSQL 17 every fair advantage?** (`GIN pg_trgm` trigram indexes with 3+ character search needles, `2 GiB` prewarmed `shared_buffers`, and `work_mem=32MB` + `random_page_cost=0.2`).
 2. **What happens under dynamic intra-tenant filters and cold-start warm-up when we tune PgCache's `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`)?** (Based on architectural feedback from PgCache core developer James).
+3. **What is the true impact of Local NVMe storage exclusively on `PgCache` for Materialized Views under real disk pressure (`SCALE=10`, ~5 GB / 28.5M rows with `shared_buffers=128MB` and `MEMO_CACHE_SIZE=0`)?**
 
-See **[`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)** for the complete multi-trial (`TRIALS=5` and `TRIALS=3`) analysis, including why `ADMISSION_THRESHOLD=4` completely eliminates the `-56%` dynamic-filter regression (`235.77 ms / 34 rps`) and cuts cold-start latency by **58% to 76%**.
+See **[`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)** for the complete multi-trial (`TRIALS=5` and `TRIALS=3`) analysis, including:
+- Why `ADMISSION_THRESHOLD=4` completely eliminates the `-56%` dynamic-filter regression (`235.77 ms / 34 rps`) and cuts cold-start latency by **58% to 76%**.
+- How isolating `PgCache` on **Local NVMe SSD** (while keeping `Origin` fixed on Standard SSD) under 5 GB real disk pressure cuts settled latency by **`3.86×`** on `mv5g_heavy` (beating Origin by **`+25%`**), cuts partial-hit latency by up to **`14.17×`** on `mv5g_dash` (**`+66.7%` to `+100%` over Origin**), and cuts mean latency under CDC invalidation churn (`mv5g_cdc9010`) by **`9.66×` (`36,361.7 ms` $\rightarrow$ `3,763.4 ms`, and `60.38×` on Trial 1 peak stall)**!
 
 ---
 
@@ -1198,7 +1201,8 @@ pgcache-multi-tenant/
 │   ├── complex-joins.sql            4-statement 4-to-6 table JOIN & LEFT JOIN workload
 │   ├── complex-analytics.sql        4-statement GROUP BY / FILTER / CASE / HAVING workload
 │   ├── complex-dashboard.sql        unified 8-statement complex analytics & search screen
-│   └── complex-dashboard-dynamic.sql 8-statement screen with 4,000 dynamic intra-tenant shapes
+│   ├── complex-dashboard-dynamic.sql 8-statement screen with 4,000 dynamic intra-tenant shapes
+│   └── complex-mv-heavy.sql         4-statement wide Materialized View workload (LIMIT 300–500)
 ├── scripts/
 │   ├── lib.sh                       scrape, run, warm_until_settled, reset_pgcache, cell
 │   ├── 00-setup.sh                  apply schema, copy workload into the pod
@@ -1209,6 +1213,8 @@ pgcache-multi-tenant/
 │   ├── 05-endurance-90m.sh          1h30m endurance & resource offload campaign (30+30m read, 15+15m R/W)
 │   ├── 06-fair-benchmark.sh         Fair Benchmark (Tuned Origin vs PgCache + Dynamic Filters)
 │   ├── 07-admission-threshold-sweep.sh ADMISSION_THRESHOLD (1, 2, 4) & Cold-Start sweep
+│   ├── 08-nvme-mv-benchmark.sh      Case 1: Regular SSD vs Local NVMe MV study (SCALE=1)
+│   ├── 09-nvme-5gb-stress.sh        Case 2: 5 GB Real Disk-Pressure study (SCALE=10, PgCache SSD vs NVMe)
 │   ├── deploy-monitoring.sh         deploys Grafana Cloud telemetry stack to Kubernetes
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
 │   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
