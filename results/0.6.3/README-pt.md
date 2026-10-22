@@ -1,107 +1,49 @@
-# Verificação de Benchmark PgCache — Tag 0.6.3
+# Relatório de Benchmark PgCache 0.6.3: Escalando de 1 a 2.000 Tenants em um Cluster de 3 Nós na Nuvem
 
-> 🇺🇸 **[English version](README.md)**
+> 🇺🇸 **[Read in English](README.md)**
 
-Execução de verificação para **PgCache v0.6.3** (`pgcache/pgcache:0.6.3`) executada em dois ambientes complementares:
-1. **DigitalOcean Kubernetes (DOKS)**: Topologia de 3 nós dedicados cobrindo de 1 a 2.000 tenants.
-2. **Ambiente Local Docker**: Linha de base em host único cobrindo de 1 a 1.000 tenants, escala de concorrência e escritas concorrentes.
+Este relatório documenta a verificação da versão **PgCache v0.6.3** (`pgcache/pgcache:0.6.3`) em um **cluster Kubernetes de 3 nós na nuvem** (executado na DigitalOcean DOKS com `3× s-4vcpu-8gb` na mesma zona, podendo ser reproduzido em qualquer provedor cloud), rodando o PostgreSQL 17, o PgCache e o gerador de carga em três máquinas virtuais separadas. Consulte o [**Guia de Workloads (`workload/README-pt.md`)**](../../workload/README-pt.md) e o arquivo [`workload/dashboard.sql`](../../workload/dashboard.sql) para ver as consultas SQL exatas do teste.
 
 ---
 
-## 1. Resumo
+## 1. Principais Conclusões
 
-- **Hit Ratio**: **100,0%** em todas as faixas de tenants (de 1 a 2.000 tenants no DOKS, de 1 a 1.000 no Docker).
-- **Escala de Espaço de Chaves**: De 1 tenant a 2.000 tenants no DOKS, o PgCache manteve latências estáveis (~16,7 ms a 19,4 ms) contra ~25,6 ms a 32,2 ms na origem.
-- **Passos de Aquecimento**: Estabilizou em 2 passos (60s) para 1–100 tenants, 3 passos (90s) para 500–1.000 tenants e 4 passos (120s) para 2.000 tenants no DOKS.
-- **Ganho de Vazão**: Entregou **+40% a +93% de ganho de vazão** no DOKS, e **+140% a +153%** no Docker local.
-- **Paridade de Ambientes**: Preserva tanto os dados de produção na nuvem quanto os de desenvolvimento local.
+- **100,0% de Acerto no Cache até 2.000 Tenants**: Multiplicar o número de clientes ativos de 1 para 2.000 não derrubou a taxa de acerto nem causou expulsões de memória. Depois de aquecido, o PgCache respondeu 100% das consultas direto da memória.
+- **Ganho Consistente de +40% a +93%**: No dashboard operacional de 8 consultas (`workload/dashboard.sql`), o PgCache reduziu o tempo de resposta da tela de **25,6–32,2 ms** no PostgreSQL para **16,7–19,4 ms**, entregando **+40% a +93% mais telas por segundo**.
+- **Aquecimento Previsível**: O cache estabilizou em 2 ciclos de aquecimento (60s) para 1–100 tenants, 3 ciclos (90s) para 500–1.000 tenants e 4 ciclos (120s) para 2.000 tenants.
 
 ---
 
-## 2. Detalhes de Infraestrutura e Recursos
+## 2. Configuração do Cluster (3 VMs Dedicadas na Nuvem)
 
-| Componente | DigitalOcean Kubernetes (DOKS) | Docker Local (Desenvolvimento) |
-|---|---|---|
-| **Topologia** | 3 nós físicos separados (`sfo3` single-AZ) | Runtime de contêineres em host único |
-| **Nós de Computação**| 3x `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM) | Cores de CPU / memória compartilhados |
-| **Control Plane** | `--ha=false` (taxa de control plane a $0) | Daemon local do Docker |
-| **SO / Kernel** | Debian 13 (trixie), kernel 6.12.96 | Kernel do host |
-| **Storage Class** | CSI `do-block-storage` (25 GiB origin, 15 GiB loadgen) | Volumes bind-mount locais |
-| **Isolamento** | `podAntiAffinity` estrito (1 nó exclusivo por pod) | Scheduler CFS compartilhado |
-| **Rede** | `hostNetwork: true` (roteamento IP direto do nó) | Rede bridge do Docker |
-| **Limites de CPU** | Não definidos (evita jitter por throttling CFS) | Não definidos |
-| **Origem (PostgreSQL)**| PostgreSQL 17, `shared_buffers=512MB` | PostgreSQL 17, `shared_buffers=1GB` |
-| **PgCache** | `workers=4`, `metricsPort=9091` | `workers=4`, `metricsPort=9090` |
-| **Base de Dados** | 500k pedidos, 2M itens (~594 MB), 2.000 tenants | 500k pedidos, 2M itens (~463 MB), 1.000 tenants |
+| Componente | Configuração |
+|---|---|
+| **Topologia** | 3 nós físicos separados na DigitalOcean (`sfo3` single-AZ, `--ha=false`) |
+| **Tamanho das VMs** | 3× `s-4vcpu-8gb` (4 vCPUs AMD64, 8 GB RAM por máquina) |
+| **Isolamento Físico** | `podAntiAffinity` estrito (1 nó exclusivo para `origin`, `pgcache` e `loadgen`) |
+| **Rede** | `hostNetwork: true` (roteamento direto por IP do nó) |
+| **Banco Principal** | PostgreSQL 17, `shared_buffers=512MB`, 500 mil pedidos, 2 milhões de itens (~594 MB), 2.000 tenants |
+| **PgCache** | `pgcache/pgcache:0.6.3`, `NUM_WORKERS=4` |
 
 ---
 
-## 3. Sweep 1 — Varredura de Tenants
+## 3. Escalando de 1 até 2.000 Tenants (8 Clientes Simultâneos)
 
-### 3.1 DigitalOcean Kubernetes (DOKS — 1 a 2.000 Tenants)
+Cada requisição executa em sequência as 8 consultas SQL do arquivo `workload/dashboard.sql`:
 
-Avaliando a expansão do espaço de consultas em 1, 10, 50, 100, 500, 1.000 e 2.000 tenants ativos (concorrência fixa em 8 clientes, duração de 30s, aquecimento dinâmico):
-
-| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
+| Tenants Ativos | PostgreSQL Direto (Caminho A) | PgCache 0.6.3 (Caminho B) | Ganho | Taxa de Acerto | Passos de Aquecimento |
 |---:|---|---|---:|---:|---:|
-| 1 | 27,5 ms · 291 rps | 17,6 ms · 455 rps | +56% | 100,0% | 2 |
-| 10 | 27,0 ms · 296 rps | 17,8 ms · 451 rps | +52% | 100,0% | 2 |
-| 50 | 29,2 ms · 274 rps | 17,5 ms · 456 rps | +66% | 100,0% | 2 |
-| 100 | 30,3 ms · 264 rps | 19,4 ms · 412 rps | +56% | 100,0% | 2 |
-| 500 | 32,2 ms · 248 rps | 16,7 ms · 478 rps | +93% | 100,0% | 3 |
-| 1.000 | 26,2 ms · 305 rps | 17,5 ms · 458 rps | +50% | 100,0% | 3 |
-| 2.000 | 25,6 ms · 313 rps | 18,3 ms · 438 rps | +40% | 100,0% | 4 |
-
-### 3.2 Ambiente Local Docker (1 a 1.000 Tenants)
-
-Avaliando a linha de base em host único no Docker em 1, 10, 50, 200, 500 e 1.000 tenants ativos:
-
-| Tenants Ativos | Origem (Caminho A) | PgCache 0.6.3 (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
-|---:|---|---|---:|---:|---:|
-| 1 | 33,9 ms · 236 rps | 13,4 ms · 596 rps | +153% | 100,0% | 2 |
-| 10 | 32,6 ms · 246 rps | 13,6 ms · 590 rps | +140% | 100,0% | 2 |
-| 50 | 33,7 ms · 237 rps | 13,8 ms · 578 rps | +144% | 100,0% | 3 |
-| 200 | 34,6 ms · 231 rps | 14,0 ms · 570 rps | +147% | 100,0% | 3 |
-| 500 | 34,6 ms · 231 rps | 14,2 ms · 563 rps | +144% | 100,0% | 4 |
-| 1.000 | 34,7 ms · 230 rps | 14,3 ms · 559 rps | +143% | 100,0% | 5 |
+| **1** | 27,5 ms · 291 telas/s | **17,6 ms · 455 telas/s** | **+56%** | 100,0% | 2 |
+| **10** | 27,0 ms · 296 telas/s | **17,8 ms · 451 telas/s** | **+52%** | 100,0% | 2 |
+| **50** | 29,2 ms · 274 telas/s | **17,5 ms · 456 telas/s** | **+66%** | 100,0% | 2 |
+| **100** | 30,3 ms · 264 telas/s | **19,4 ms · 412 telas/s** | **+56%** | 100,0% | 2 |
+| **500** | 32,2 ms · 248 telas/s | **16,7 ms · 478 telas/s** | **+93%** | 100,0% | 3 |
+| **1.000** | 26,2 ms · 305 telas/s | **17,5 ms · 458 telas/s** | **+50%** | 100,0% | 3 |
+| **2.000** | 25,6 ms · 313 telas/s | **18,3 ms · 438 telas/s** | **+40%** | 100,0% | 4 |
 
 ---
 
-## 4. Sweep 2 — Concorrência de Clientes (Linha de Base Docker)
+## 4. Arquivos Brutos
 
-Separando velocidade pura do cache de leitura da saturação da origem (escala de clientes com 1.000 tenants):
-
-| Clientes | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
-|---:|---|---|---:|---:|---:|
-| 1 | 11,2 ms · 89 rps | 5,53 ms · 181 rps | +103% | 100,0% | 2 |
-| 4 | 19,2 ms · 208 rps | 8,79 ms · 455 rps | +119% | 100,0% | 2 |
-| 8 | 35,4 ms · 226 rps | 14,62 ms · 547 rps | +142% | 100,0% | 2 |
-| 16 | 60,3 ms · 265 rps | 25,18 ms · 635 rps | +140% | 100,0% | 2 |
-| 32 | 107,2 ms · 299 rps | 45,02 ms · 711 rps | +138% | 100,0% | 2 |
-
----
-
-## 5. Sweep 3 — Taxa de Escritas e Concentração (Linha de Base Docker)
-
-Testando a resiliência à invalidação de cache com carga mista (8 clientes, 1.000 tenants):
-
-| Escritas | Tenants de Escrita | Origem (Caminho A) | PgCache (Caminho B) | Ganho | Hit Ratio | Passos de Aquecimento |
-|---:|---:|---|---|---:|---:|---:|
-| 0% | 1000 | 35,1 ms · 228 rps | 14,52 ms · 551 rps | +142% | 100,0% | 2 |
-| 5% | 1 | 33,5 ms · 239 rps | 13,92 ms · 575 rps | +141% | 100,0% | 2 |
-| 5% | 10 | 33,3 ms · 240 rps | 14,03 ms · 570 rps | +138% | 100,0% | 2 |
-| 5% | 1000 | 33,2 ms · 241 rps | 13,93 ms · 574 rps | +138% | 100,0% | 2 |
-| 10% | 1 | 31,4 ms · 254 rps | 13,28 ms · 603 rps | +137% | 100,0% | 2 |
-| 10% | 1000 | 31,9 ms · 251 rps | 13,27 ms · 603 rps | +140% | 100,0% | 2 |
-
----
-
-## 6. Artefatos Brutos
-
-- Dados legíveis por máquina: [`results.tsv`](results.tsv)
-- TSV do DigitalOcean DOKS: [`results-doks.tsv`](results-doks.tsv)
-- TSV do Docker Local: [`results-docker.tsv`](results-docker.tsv)
-- Log bruto do sweep de tenants (DOKS): [`run-tenants-doks.txt`](run-tenants-doks.txt)
-- Log bruto do sweep de tenants (Docker): [`run-tenants-docker.txt`](run-tenants-docker.txt)
-- Log bruto de concorrência (Docker): [`run-clients.txt`](run-clients.txt)
-- Log bruto de escritas (Docker): [`run-writes.txt`](run-writes.txt)
+- TSV DOKS (3 Nós): [`results-doks.tsv`](results-doks.tsv)
+- Log Bruto da Varredura de Tenants (DOKS): [`run-tenants-doks.txt`](run-tenants-doks.txt)

@@ -1,197 +1,282 @@
-# PgCache Benchmark Verification — Tag 0.7.1 (DOKS 3-Node Cloud & Local Docker — Baseline & Complex Multi-Tenant Scenarios)
+# Benchmarking PgCache 0.7.1 in a Multi-Tenant SaaS: What Actually Happens on a 3-Node Cloud Cluster
 
-> 🇧🇷 **[Versão em português](README-pt.md)**
+> 🇧🇷 **[Ler em português](README-pt.md)** · 🚀 **[Read Part 2 (`results/0.7.1_v2/`): The "Fair Benchmark" (`2 GiB` Prewarmed Origin + `GIN pg_trgm`), Dynamic User Filters, & `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) Study](../0.7.1_v2/README.md)**
 
-Verification run for **PgCache v0.7.1** (`pgcache/pgcache:0.7.1` on AMD64 DOKS / `pgcache/pgcache:0.7.1-arm64` on Local Docker) executed across two environments and two workload complexity suites:
+Does putting a read-cache proxy in front of PostgreSQL actually make a multi-tenant SaaS faster — and where does it hit its limits?
 
-1. **Environments**:
-   - **DigitalOcean Kubernetes (DOKS — 3 Dedicated Nodes)**: 3× `s-4vcpu-8gb` in single-AZ (`sfo2`), `--ha=false` ($0 control plane), strict `podAntiAffinity` (`origin`, `pgcache`, and `loadgen` on 3 distinct physical nodes), `hostNetwork: true`, direct node IP routing, and tuned profile (`NUM_WORKERS=8`, `PGCACHE_POPULATION_WORKERS_MIN=4`, `MEMO_CACHE_SIZE="1073741824"`, `MEMORY_LIMIT="3758096384"`, 2 GiB `/dev/shm`).
-   - **Local Docker Environment**: Single-host baseline across 1 to 1,000 tenants, concurrency scaling, and mixed write workloads (`infra/docker-compose.yml`).
-2. **Workload Suites**:
-   - **Baseline Operational Dashboard (`workload/dashboard.sql`)**: Full regression verification across 1 to 2,000 tenants on DOKS (and 1 to 1,000 tenants, 1 to 32 clients, and 0%–10% writes in Docker).
-   - **Complex Multi-Tenant SaaS Workloads (`scripts/04-complex-sweep.sh`)**: Substring text search (`ILIKE '%...%'`), deep 4-to-6 table `INNER JOIN` and `LEFT JOIN` chains (including zero-order customer cohorts and unreviewed product inventory), multi-dimensional analytical aggregations (`GROUP BY`, `FILTER (WHERE ...)`, `CASE WHEN`, `HAVING`), and a unified 8-statement enterprise analytics & search screen (`workload/complex-dashboard.sql`), verified by a strict **Differential Correctness, Cacheability, and MV Admission Gate** (`scripts/verify-correctness.sh`).
+This article presents the results of testing **PgCache 0.7.1** (`pgcache/pgcache:0.7.1`) in front of **PostgreSQL 17**. Every test is designed to run on a **3-node Kubernetes cluster in any cloud provider** (AWS EKS, Azure AKS, Google GKE, or DigitalOcean DOKS), placing the database, the cache proxy, and the load generator on **three separate virtual machines** so that every query pays real network latency and has isolated CPU and RAM. For this campaign, we ran the cluster on DigitalOcean (`3× s-4vcpu-8gb` in a single availability zone).
 
 ---
 
-## 1. Executive Summary
+## 1. What We Are Testing: The Database & SQL Workloads
 
-- **Differential Correctness, Cacheability & MV Hit Gate (`verify-correctness-doks.txt` & `verify-correctness.txt`)**:
-  - Verified on **both 3-node DOKS and Local Docker**: all **12/12 distinct complex multi-tenant SQL queries** across `complex-search.sql` (4), `complex-joins.sql` (4), and `complex-analytics.sql` (4) (covering 100% of `complex-dashboard.sql`) produced byte-for-byte identical result sets between Origin PostgreSQL 17 and PgCache 0.7.1 across all three passes: cold miss/populate (Pass 1), base-table hit + MV build (Pass 2), and warm Materialized View hit (Pass 3).
-  - **100% Cacheability**: `pgcache_queries_cacheable` delta = `36/36`, `pgcache_queries_uncacheable` delta = **`0`**, `pgcache_queries_cache_error` delta = **`0`**.
-  - **100% Materialized View (MV) Gate Admission & Hit Verification**: `pgcache_cache_mv_gate{outcome="admit"}` = **`12/12`** (`outcome="reject"` = `0`), and `pgcache_cache_mv_hits` delta = **`12/12`** on Pass 3.
-- **Baseline Operational Dashboard (`workload/dashboard.sql`)**:
-  - **3-Node DOKS (`1` to `2,000` Tenants)**: **100.0% hit ratio** across every tenant tier up to 2,000 tenants, delivering **+40% to +63% throughput gain** (`470–491 rps` at `16.29–17.01 ms` vs `302–343 rps` at `23.31–26.52 ms` on Origin across 50–2,000 tenants).
-  - **Local Docker (`1` to `1,000` Tenants)**: **99.9%–100.0% hit ratio**, delivering **+116% to +139%** across tenant scaling, **+93% to +138%** across concurrency scaling (`1..32` clients), and **+40% to +110%** under 5%–10% write ratios.
-- **Complex Multi-Tenant Workloads (`workload/complex-*.sql`)**:
-  - **3-Node DOKS Cloud Speedup**: Across 3 separate cloud nodes, Materialized View acceleration reduces complex 4-to-6 table `JOIN`/`LEFT JOIN`/`GROUP BY`/`ILIKE` query latency from **74.3–204.4 ms** on Origin to **4.73–11.50 ms** on PgCache (including 4 to 8 cross-node network round-trips), delivering **14.7× to 31.3× higher throughput (`+1,369%` to `+3,033%`)** at 8 clients, **12.1× (`+1,108%`, 100.0% hit)** at **500 active tenants** (`4,000` distinct MVs), and **26.8× (`+2,584%`, `1,020 rps` at `31.36 ms` vs `38 rps` at `835.52 ms`)** at **32 concurrent clients**.
-  - **Local Docker Speedup**: Without cross-node network RTT, complex queries drop from **88.7–209.6 ms** on Origin to **1.25–2.86 ms** on PgCache (~0.31–0.38 ms per statement), delivering **58.0× to 97.4× higher throughput (`+5,703%` to `+9,636%`)** at 8 clients and **94.0× (`+9,300%`, `3,478 rps` vs `37 rps`)** at 32 clients.
-  - **Mixed Write Resilience (`INNER JOIN` In-Place CDC vs. `LEFT JOIN` Outer Invalidation)**: By scoping every joined tenant table with an explicit `:t` literal (`AND o.tenant_id = :t`, `AND oi.tenant_id = :t`, `AND c.tenant_id = :t`), the **5 `INNER JOIN` queries (`62.5%`)** in `complex-dashboard.sql` remain **100% cache hits** under `UPDATE orders` writes (updated in-place via CDC + background MV rebuild), while the **3 `LEFT JOIN` queries (`37.5%`)** undergo conservative invalidation. Consequently, `complex-dashboard.sql` sustains a **63.1%–75.0% hit ratio on DOKS** (`+12%` to `+16%` gain on concentrated writes `5:1` / `10:1` and near-parity `-5%` to `-12%` on 200-tenant distributed writes) and **62.5%–67.6% hit ratio in Docker** (`+8%` to `+30%` gain) with zero cache errors.
+> 📖 **Full SQL & Data Modeling Guide**: For the Entity-Relationship diagram, index catalog, and the exact SQL code of every query, read **[`workload/README.md`](../../workload/README.md)**.
 
----
+We model a multi-tenant B2B/B2C e-commerce SaaS database created by [`sql/01-schema.sql`](../../sql/01-schema.sql) and [`sql/02-tenant.sql`](../../sql/02-tenant.sql), containing **7 relational tables** (`customer`, `orders`, `order_item`, `product`, `category`, `seller`, and `review`) populated with **500,000 orders, 2,000,000 order line items, 300,000 reviews, 200,000 products, and 100,000 customers** distributed across up to **2,000 tenant organizations**.
 
-## 2. Differential Correctness, Cacheability & MV Admission Gate
+Instead of firing single isolated queries, each `pgbench` transaction simulates a user loading a **complete SaaS screen** made of **4 to 8 sequential SQL queries**:
 
-Executed via [`scripts/verify-correctness.sh`](../../scripts/verify-correctness.sh) on both 3-node DOKS ([`verify-correctness-doks.txt`](verify-correctness-doks.txt)) and Local Docker ([`verify-correctness.txt`](verify-correctness.txt)):
+| SQL Workload File | Queries per Screen | What the Screen Simulates |
+|---|:---:|---|
+| **[`workload/dashboard.sql`](../../workload/dashboard.sql)** | **8** | **Lightweight Operational Dashboard**: Fast indexed KPI counts (`GROUP BY status`), total revenue, customer count, recent orders pagination, and 2-table `INNER JOIN` lists. |
+| **[`workload/complex-search.sql`](../../workload/complex-search.sql)** | **4** | **Substring Text Search (`ILIKE '%...%'`)**: Case-insensitive wildcard searches across customer names/emails, product names, seller names, and review text joined across 3 to 6 tables. |
+| **[`workload/complex-joins.sql`](../../workload/complex-joins.sql)** | **4** | **Deep 4-to-6 Table `JOIN` & `LEFT JOIN` Chains**: Multi-hop joins (`orders → customer → order_item → product → category → seller → review`), including outer joins that preserve customers with zero orders and products with zero reviews. |
+| **[`workload/complex-analytics.sql`](../../workload/complex-analytics.sql)** | **4** | **Multi-Dimensional Analytics**: OLAP-style `GROUP BY` rollups using `FILTER (WHERE ...)`, `CASE WHEN` price-tier buckets, and `HAVING` thresholds across 4 to 6 tables. |
+| **[`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql)** | **8** | **Full Enterprise Screen (Uniform Traffic)**: Combines 3 analytical rollups, 3 deep multi-table joins, and 2 `ILIKE` text searches into one heavy 8-query screen, picking tenants uniformly (`1..N`). |
+| **[`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)** | **8** | **Full Enterprise Screen (Pareto 80/20 Traffic)**: The exact same 8 heavy queries, but using a realistic **Zipfian (`s = 1.07`)** distribution where ~20% of tenants generate ~80% of requests. |
+| **[`workload/write.sql`](../../workload/write.sql)** | **2** | **Live Transactional Writes (`UPDATE` + `INSERT`)**: Updates an existing order (`UPDATE orders`) and inserts a new line item (`INSERT INTO order_item`) to trigger Change Data Capture (CDC) replication in PgCache. |
 
-| Check | 3-Node DOKS Result | Local Docker Result | Telemetry / Detail |
-|---|---|---|---|
-| **Byte-for-Byte Output Equality** | **PASS (12/12 queries)** | **PASS (12/12 queries)** | `psql -tAF '|'` output identical between Origin and PgCache across Pass 1 (miss), Pass 2 (base-table hit + MV build), and Pass 3 (warm MV hit) |
-| **Cacheable Queries Delta** | **PASS (`36 / 36`)** | **PASS (`36 / 36`)** | `pgcache_queries_cacheable` incremented by 36 across 3 passes of 12 statements |
-| **Uncacheable Queries Delta** | **PASS (`0`)** | **PASS (`0`)** | `pgcache_queries_uncacheable` delta = `0` |
-| **MV Gate Admission** | **PASS (`12 / 12`)** | **PASS (`12 / 12`)** | `pgcache_cache_mv_gate{outcome="admit"}` = `12`, `pgcache_cache_mv_gate{outcome="reject"}` = `0` |
-| **Materialized View Hits** | **PASS (`12 / 12`)** | **PASS (`12 / 12`)** | `pgcache_cache_mv_hits` delta = `12` (100% of Pass 3 queries served directly from MVs) |
-| **Cache Errors Delta** | **PASS (`0`)** | **PASS (`0`)** | `pgcache_queries_cache_error` delta = `0` |
+### The Two Paths Compared
+- **Path A (PostgreSQL Direct)**: The load generator connects straight to the PostgreSQL 17 VM.
+- **Path B (PgCache 0.7.1)**: The load generator connects to the PgCache VM, which serves cached queries from memory and subscribes to PostgreSQL's logical replication stream (CDC) to keep results coherent.
 
 ---
 
-## 3. Baseline Sweeps 1–3 (`workload/dashboard.sql`)
+## 2. Executive Summary (TL;DR)
 
-### 3.1 Sweep 1 — Tenant Count Sweep on 3-Node DOKS (`1` to `2,000` Tenants, `CLIENTS=8`)
+1. **100% Identical Answers (`verify-correctness.sh`)**: Before measuring speed, we verified that all **8 baseline queries** and all **12 complex queries** return byte-for-byte identical rows on PostgreSQL and PgCache — both on static reads and immediately after live `UPDATE` and `INSERT` mutations.
+2. **Simple Queries vs. Heavy Queries (1.98× vs. 29.4× Faster)**:
+   - On the **lightweight dashboard** ([`dashboard.sql`](../../workload/dashboard.sql)), PostgreSQL already answers all 8 indexed queries in **57.8 ms**, so PgCache nearly **doubles throughput (+98%, from 146 to 273 screens/s)**.
+   - On **heavy multi-table screens** ([`complex-search.sql`](../../workload/complex-search.sql), [`complex-joins.sql`](../../workload/complex-joins.sql), [`complex-analytics.sql`](../../workload/complex-analytics.sql)), PostgreSQL takes **130 to 308 ms** scanning and joining tables. PgCache pre-computes those views in memory and answers the entire screen in **6.9 to 23.4 ms** — delivering **15× to 29.4× more throughput (+1,400% to +2,839%)**.
+3. **Why Real-World 80/20 Traffic Matters at 2,000 Tenants**:
+   - When 2,000 tenants follow a realistic **Pareto 80/20 distribution** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)), the active tenant cohort warms quickly (**64.1% hit rate**) and PgCache stays ahead of PostgreSQL even from a cold start.
+4. **Where the Cache Struggles (Cold Start Under Heavy Writes)**:
+   - When warmed first, PgCache handles 5%–10% write traffic cleanly (**63%–75% hit rate**).
+   - However, if you restart the cache **completely cold** while simultaneously bombarding the database with both `UPDATE orders` and `INSERT INTO order_item` ([`write.sql`](../../workload/write.sql)), replication invalidations fight against initial cache population and throughput drops below PostgreSQL (**-85%**). Always warm your read working set before cutting over heavy mixed read/write traffic.
+5. **Follow-Up in Part 2 ([`results/0.7.1_v2/`](../0.7.1_v2/README.md))**:
+   - See **[Part 2 (`0.7.1_v2`)](../0.7.1_v2/README.md)** for our follow-up study with a **2 GiB prewarmed + `GIN pg_trgm` tuned PostgreSQL Origin**, **3+ char trigram text search (`search_3c`)**, **dynamic intra-tenant user filters (`cplx_dyn`)**, and an empirical sweep of **`ADMISSION_THRESHOLD = 1` vs `2` vs `4`** based on feedback from James (PgCache core developer).
+
+---
+
+## 3. Multi-Trial Benchmark: Consolidated Table & All 5 Individual Runs (`TRIALS=5`)
+
+In cloud environments, a single benchmark run can be skewed by a lucky warm-up or a background network hiccup. To eliminate single-run anomalies, we executed every scenario **5 independent times (`TRIALS=5`, `DURATION=15s`, `CLIENTS=8`)**.
+
+Before **every single trial**, our automation (`reset_all_pods` in [`scripts/lib.sh`](../../scripts/lib.sh)) cleaned up any inserted rows and **recreated the PostgreSQL pod, the PgCache pod, and the loadgen pod from scratch**, warming the cache dynamically (`warm_until_settled`) before measuring Path B.
+
+Raw logs: [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt) · [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt) · [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
+
+### 3.1 Consolidated 5-Run Summary
+
+| Scenario & SQL Workload (`CLIENTS=8`) | PostgreSQL Direct (Path A Mean) | PgCache 0.7.1 (Path B Mean) | Hit Rate | Mean Speedup (5-Run Min/Max Spread) |
+|---|---|---|---:|---|
+| **1. Lightweight Dashboard** ([`dashboard.sql`](../../workload/dashboard.sql), 200 tenants) | 57.8 ms · **146 req/s** *(±40.5 sd)* | **29.4 ms · 273 req/s** *(±16.3 sd)* | **100.0%** | **1.98× (+98%)** *(-68% / +69%)* |
+| **2. Substring Text Search** ([`complex-search.sql`](../../workload/complex-search.sql), 200 tenants) | 129.6 ms · **63 req/s** *(±9.2 sd)* | **6.9 ms · 1,170 req/s** *(±126.1 sd)* | **100.0%** | **18.8× (+1,778%)** *(-266% / +243%)* |
+| **3. Deep 4-to-6 Table Joins** ([`complex-joins.sql`](../../workload/complex-joins.sql), 200 tenants) | 238.9 ms · **34 req/s** *(±2.8 sd)* | **8.2 ms · 991 req/s** *(±160.6 sd)* | **100.0%** | **29.4× (+2,839%)** *(-666% / +443%)* |
+| **4. Multi-Dimensional Analytics** ([`complex-analytics.sql`](../../workload/complex-analytics.sql), 200 tenants) | 175.3 ms · **46 req/s** *(±4.1 sd)* | **9.0 ms · 905 req/s** *(±122.1 sd)* | **100.0%** | **19.8× (+1,883%)** *(-395% / +267%)* |
+| **5. Full Enterprise Screen — Uniform** ([`complex-dashboard.sql`](../../workload/complex-dashboard.sql), 200 tenants) | 307.5 ms · **26 req/s** *(±1.2 sd)* | **23.4 ms · 389 req/s** *(±132.6 sd)* | **100.0%** | **15.0× (+1,400%)** *(-766% / +684%)* |
+| **6. Full Enterprise Screen — Pareto 80/20** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql), 200 tenants) | 339.2 ms · **24 req/s** *(±4.1 sd)* | **76.0 ms · 267 req/s** *(±191.3 sd)* | **97.5%** | **11.5× (+1,051%)** *(-1,016% / +917%)* |
+| **7. Full Enterprise Screen — Pareto 80/20** ([`complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql), 2,000 tenants) | 373.1 ms · **22 req/s** *(±1.9 sd)* | **351.2 ms · 24 req/s** *(±5.4 sd)* | **64.1%** | **1.09× (+9%)** *(-26% / +30%)* |
+| **8. Cold-Start + 5% Writes (`UPDATE`+`INSERT`)** ([`complex-dashboard.sql`](../../workload/complex-dashboard.sql) + [`write.sql`](../../workload/write.sql)) | 327.9 ms · **25 req/s** *(±2.7 sd)* | 2,995.5 ms · **3 req/s** *(±2.6 sd)* | **32.4%** | **0.15× (-85%)** *(-8% / +23%)* |
+
+---
+
+### 3.2 Run-by-Run Breakdown: All 5 Executions per Scenario
+
+Below are the exact measurements recorded in each of the 5 pod-recreated trials (`Trial 1` through `Trial 5`).
+
+#### Scenario 1: Lightweight Operational Dashboard — [`workload/dashboard.sql`](../../workload/dashboard.sql) (8 queries, 200 tenants)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 38.91 ms | 206 req/s | 29.94 ms | 267 req/s | 100.00% | **+29.6% (1.30×)** | 6 |
+| **Trial 2** | 72.54 ms | 110 req/s | 27.18 ms | 294 req/s | 100.00% | **+167.3% (2.67×)** | 5 |
+| **Trial 3** | 69.15 ms | 116 req/s | 29.14 ms | 275 req/s | 99.99% | **+137.1% (2.37×)** | 5 |
+| **Trial 4** | 47.41 ms | 169 req/s | 28.58 ms | 280 req/s | 100.00% | **+65.7% (1.66×)** | 6 |
+| **Trial 5** | 61.18 ms | 131 req/s | 31.98 ms | 250 req/s | 99.99% | **+90.8% (1.91×)** | 5 |
+| **Average (5 Runs)** | **57.84 ms** | **146 req/s** *(±40.5 sd, -36/+60)* | **29.36 ms** | **273 req/s** *(±16.3 sd, -23/+21)* | **100.0%** | **+98% (1.98×)** | **5.4** |
+
+> **What we see across the 5 runs**: Notice how PostgreSQL Direct (Path A) fluctuates between `110 req/s` and `206 req/s` (`±40.5 sd`) right after a pod restart as its buffer pool and I/O warm up, whereas PgCache (Path B) is rock-solid across all 5 runs (`250 to 294 req/s`, `±16.3 sd`).
+
+---
+
+#### Scenario 2: Substring Text Search (`ILIKE '%...%'`) — [`workload/complex-search.sql`](../../workload/complex-search.sql) (4 queries, 200 tenants)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 107.94 ms | 74 req/s | 6.61 ms | 1,210 req/s | 100.00% | **+1,535.1% (16.4×)** | 5 |
+| **Trial 2** | 120.00 ms | 67 req/s | 6.03 ms | 1,327 req/s | 100.00% | **+1,880.6% (19.8×)** | 5 |
+| **Trial 3** | 161.05 ms | 50 req/s | 7.84 ms | 1,020 req/s | 100.00% | **+1,940.0% (20.4×)** | 6 |
+| **Trial 4** | 121.72 ms | 66 req/s | 7.52 ms | 1,064 req/s | 100.00% | **+1,512.1% (16.1×)** | 5 |
+| **Trial 5** | 137.43 ms | 58 req/s | 6.50 ms | 1,230 req/s | 100.00% | **+2,020.7% (21.2×)** | 5 |
+| **Average (5 Runs)** | **129.63 ms** | **63 req/s** *(±9.2 sd, -13/+11)* | **6.90 ms** | **1,170 req/s** *(±126.1 sd, -150/+157)* | **100.0%** | **+1,778% (18.8×)** | **5.2** |
+
+---
+
+#### Scenario 3: Deep 4-to-6 Table `JOIN` & `LEFT JOIN` Chains — [`workload/complex-joins.sql`](../../workload/complex-joins.sql) (4 queries, 200 tenants)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 214.54 ms | 37 req/s | 9.51 ms | 841 req/s | 100.00% | **+2,173.0% (22.7×)** | 6 |
+| **Trial 2** | 242.98 ms | 33 req/s | 7.17 ms | 1,116 req/s | 100.00% | **+3,281.8% (33.8×)** | 7 |
+| **Trial 3** | 268.60 ms | 30 req/s | 9.74 ms | 821 req/s | 100.00% | **+2,636.7% (27.4×)** | 7 |
+| **Trial 4** | 245.73 ms | 33 req/s | 8.02 ms | 997 req/s | 100.00% | **+2,921.2% (30.2×)** | 6 |
+| **Trial 5** | 222.48 ms | 36 req/s | 6.78 ms | 1,181 req/s | 100.00% | **+3,180.6% (32.8×)** | 6 |
+| **Average (5 Runs)** | **238.86 ms** | **34 req/s** *(±2.8 sd, -4/+3)* | **8.24 ms** | **991 req/s** *(±160.6 sd, -170/+190)* | **100.0%** | **+2,839% (29.4×)** | **6.4** |
+
+---
+
+#### Scenario 4: Multi-Dimensional Analytics (`GROUP BY / FILTER / HAVING`) — [`workload/complex-analytics.sql`](../../workload/complex-analytics.sql) (4 queries, 200 tenants)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 172.20 ms | 46 req/s | 7.73 ms | 1,035 req/s | 100.00% | **+2,150.0% (22.5×)** | 7 |
+| **Trial 2** | 175.57 ms | 46 req/s | 7.84 ms | 1,020 req/s | 100.00% | **+2,117.4% (22.2×)** | 6 |
+| **Trial 3** | 159.02 ms | 50 req/s | 10.07 ms | 794 req/s | 100.00% | **+1,488.0% (15.9×)** | 8 |
+| **Trial 4** | 203.17 ms | 39 req/s | 10.33 ms | 774 req/s | 100.00% | **+1,884.6% (19.8×)** | 6 |
+| **Trial 5** | 166.40 ms | 48 req/s | 8.89 ms | 900 req/s | 100.00% | **+1,775.0% (18.8×)** | 7 |
+| **Average (5 Runs)** | **175.27 ms** | **46 req/s** *(±4.1 sd, -7/+4)* | **8.97 ms** | **905 req/s** *(±122.1 sd, -131/+130)* | **100.0%** | **+1,883% (19.8×)** | **6.8** |
+
+---
+
+#### Scenario 5: Full Enterprise Screen (Uniform Tenant Selection) — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) (8 queries, 200 tenants)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 319.77 ms | 25 req/s | 20.59 ms | 389 req/s | 100.00% | **+1,456.0% (15.6×)** | 8 |
+| **Trial 2** | 316.40 ms | 25 req/s | 14.66 ms | 546 req/s | 100.00% | **+2,084.0% (21.8×)** | 7 |
+| **Trial 3** | 303.35 ms | 26 req/s | 41.86 ms | 191 req/s | 99.96% | **+634.6% (7.3×)** | 8 |
+| **Trial 4** | 284.58 ms | 28 req/s | 17.26 ms | 463 req/s | 100.00% | **+1,553.6% (16.5×)** | 8 |
+| **Trial 5** | 313.51 ms | 26 req/s | 22.39 ms | 357 req/s | 100.00% | **+1,273.1% (13.7×)** | 8 |
+| **Average (5 Runs)** | **307.52 ms** | **26 req/s** *(±1.2 sd, -1/+2)* | **23.35 ms** | **389 req/s** *(±132.6 sd, -198/+157)* | **100.0%** | **+1,400% (15.0×)** | **7.8** |
+
+> **Why Trial 3 is so informative**: In Trial 3, the cache hit rate was `99.96%` instead of `100.00%`. Because a single cold miss on a 6-table query takes ~40 ms to populate on the fly, that tiny `0.04%` miss rate pulled Trial 3's average latency to `41.86 ms (191 req/s)` versus `14.66–22.39 ms (357–546 req/s)` on the other 4 runs. Showing all 5 runs lets you see both the typical speed (~400–546 req/s) and the sensitivity to even a fraction of a percent of cache misses.
+
+---
+
+#### Scenario 6: Full Enterprise Screen with Pareto 80/20 Traffic (`200` Tenants) — [`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 266.60 ms | 30 req/s | 48.32 ms | 166 req/s | 99.28% | **+453.3% (5.5×)** | 8 |
+| **Trial 2** | 313.86 ms | 25 req/s | 16.95 ms | 472 req/s | 100.00% | **+1,788.0% (18.9×)** | 8 |
+| **Trial 3** | 412.61 ms | 19 req/s | 37.92 ms | 211 req/s | 99.73% | **+1,010.5% (11.1×)** | 8 |
+| **Trial 4** | 347.18 ms | 23 req/s | 259.23 ms | 31 req/s | 88.27% | **+34.8% (1.3×)** | 5 |
+| **Trial 5** | 355.99 ms | 22 req/s | 17.59 ms | 455 req/s | 100.00% | **+1,968.2% (20.7×)** | 8 |
+| **Average (5 Runs)** | **339.25 ms** | **24 req/s** *(±4.1 sd, -5/+6)* | **76.00 ms** | **267 req/s** *(±191.3 sd, -236/+205)* | **97.5%** | **+1,051% (11.5×)** | **7.4** |
+
+> **Why Trial 4 stopped warming at Pass 5**: Because Zipfian traffic repeatedly hits the hot 20% of tenants, two consecutive warm-up passes can show `< 1%` hit-rate change around `88%`, causing `warm_until_settled` to start the measurement window early while cold long-tail tenants are still populating (`31 req/s`). When the warm-up runs all 8 passes (Trials 1, 2, 3, and 5), throughput reaches **166 to 472 req/s (5.5× to 20.7× faster)**.
+
+---
+
+#### Scenario 7: Full Enterprise Screen with Pareto 80/20 Traffic (`2,000` Tenants) — [`workload/complex-dashboard-zipfian.sql`](../../workload/complex-dashboard-zipfian.sql)
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 354.03 ms | 23 req/s | 253.83 ms | 32 req/s | 70.02% | **+39.1% (1.39×)** | 7 |
+| **Trial 2** | 374.73 ms | 21 req/s | 310.03 ms | 26 req/s | 68.46% | **+23.8% (1.24×)** | 8 |
+| **Trial 3** | 383.77 ms | 21 req/s | 400.58 ms | 20 req/s | 62.19% | -4.8% (0.95×) | 5 |
+| **Trial 4** | 413.70 ms | 19 req/s | 392.73 ms | 20 req/s | 61.13% | **+5.3% (1.05×)** | 5 |
+| **Trial 5** | 339.23 ms | 24 req/s | 398.85 ms | 20 req/s | 58.75% | -16.7% (0.83×) | 4 |
+| **Average (5 Runs)** | **373.09 ms** | **22 req/s** *(±1.9 sd, -3/+2)* | **351.21 ms** | **24 req/s** *(±5.4 sd, -4/+8)* | **64.1%** | **+9% (1.09×)** | **5.8** |
+
+---
+
+#### Scenario 8: Cold-Start Cache Under 5% Live `UPDATE` + `INSERT` Writes — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) @ 95% + [`workload/write.sql`](../../workload/write.sql) @ 5%
+
+| Execution | Path A Latency | Path A RPS | Path B Latency | Path B RPS | Cache Hit Rate | Speedup (Gain) | Warm-up Passes |
+|:---:|---:|---:|---:|---:|---:|---:|---:|
+| **Trial 1** | 322.66 ms | 25 req/s | 2,851.12 ms | 3 req/s | 32.95% | -88.0% (0.12×) | 3 |
+| **Trial 2** | 378.34 ms | 21 req/s | 979.29 ms | 8 req/s | 36.52% | -61.9% (0.38×) | 3 |
+| **Trial 3** | 285.19 ms | 28 req/s | 3,263.27 ms | 2 req/s | 29.37% | -92.9% (0.07×) | 3 |
+| **Trial 4** | 346.50 ms | 23 req/s | 3,367.50 ms | 2 req/s | 27.43% | -91.3% (0.09×) | 3 |
+| **Trial 5** | 306.65 ms | 26 req/s | 4,516.17 ms | 2 req/s | 35.59% | -92.3% (0.08×) | 3 |
+| **Average (5 Runs)** | **327.87 ms** | **25 req/s** *(±2.7 sd, -4/+3)* | **2,995.47 ms** | **3 req/s** *(±2.6 sd, -1/+5)* | **32.4%** | **-85% (0.15×)** | **3.0** |
+
+---
+
+## 4. Scaling Sweeps Across Tenants, Concurrency, and Warm Writes
+
+In addition to the 5-trial suite above, we ran scaling sweeps to observe how the system behaves as we vary one dimension at a time.
+
+### 4.1 Scaling Active Tenants on the Lightweight Dashboard (`1` to `2,000` Tenants — [`workload/dashboard.sql`](../../workload/dashboard.sql))
 
 Raw log: [`run-tenants-doks.txt`](run-tenants-doks.txt) · TSV: [`results-doks.tsv`](results-doks.tsv)
 
-| Active Tenants | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Hit Ratio | Warm Passes |
+| Active Tenants | PostgreSQL Direct (Path A) | PgCache 0.7.1 (Path B) | Speedup | Hit Ratio | Warm-up Passes |
 |---:|---|---|---:|---:|---:|
-| **1** | 23.32 ms · 343 rps | **16.63 ms · 481 rps** | **+40%** | 100.0% | 2 |
-| **10** | 22.88 ms · 350 rps | **21.67 ms · 369 rps** | **+5%** | 100.0% | 2 |
-| **50** | 25.43 ms · 315 rps | **17.01 ms · 470 rps** | **+49%** | 100.0% | 3 |
-| **100** | 26.52 ms · 302 rps | **16.29 ms · 491 rps** | **+63%** | 100.0% | 3 |
-| **500** | 24.35 ms · 329 rps | **16.31 ms · 490 rps** | **+49%** | 100.0% | 4 |
-| **1,000** | 24.04 ms · 333 rps | **16.90 ms · 473 rps** | **+42%** | 100.0% | 4 |
-| **2,000** | 23.31 ms · 343 rps | **16.51 ms · 485 rps** | **+41%** | 100.0% | 6 |
-
-### 3.2 Sweep 1 — Tenant Count Sweep on Local Docker (`1` to `1,000` Tenants, `CLIENTS=8`)
-
-Raw log: [`run-tenants-docker.txt`](run-tenants-docker.txt) · TSV: [`results-docker.tsv`](results-docker.tsv)
-
-| Active Tenants | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---:|---:|
-| **1** | 37.08 ms · 216 rps | **15.56 ms · 514 rps** | **+138%** | 100.0% | 2 |
-| **10** | 36.11 ms · 222 rps | **16.13 ms · 496 rps** | **+123%** | 100.0% | 2 |
-| **50** | 37.21 ms · 215 rps | **17.22 ms · 465 rps** | **+116%** | 100.0% | 3 |
-| **200** | 40.11 ms · 199 rps | **16.86 ms · 475 rps** | **+139%** | 100.0% | 3 |
-| **500** | 40.48 ms · 198 rps | **17.78 ms · 450 rps** | **+127%** | 100.0% | 4 |
-| **1,000** | 40.87 ms · 196 rps | **17.73 ms · 451 rps** | **+130%** | 99.9% | 5 |
-
-### 3.3 Sweep 2 — Client Concurrency Sweep (`TENANTS=1,000`, Local Docker)
-
-| Clients | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---:|---:|
-| **1** | 13.26 ms · 75 rps | **6.89 ms · 145 rps** | **+93%** | 100.0% | 2 |
-| **4** | 21.82 ms · 183 rps | **9.82 ms · 408 rps** | **+123%** | 100.0% | 2 |
-| **8** | 38.67 ms · 207 rps | **16.75 ms · 478 rps** | **+131%** | 100.0% | 2 |
-| **16** | 67.48 ms · 237 rps | **30.76 ms · 520 rps** | **+119%** | 100.0% | 2 |
-| **32** | 128.51 ms · 249 rps | **53.93 ms · 593 rps** | **+138%** | 100.0% | 2 |
-
-### 3.4 Sweep 3 — Write Ratio and Concentration Sweep (`TENANTS=1,000`, `CLIENTS=8`, Local Docker)
-
-| Writes | Write Tenants | Origin (Path A) | PgCache 0.7.1 (Path B) | Gain | Hit Ratio | Warm Passes |
-|---:|---:|---|---|---:|---:|---:|
-| **0%** | 1,000 | 40.60 ms · 197 rps | **16.83 ms · 475 rps** | **+141%** | 100.0% | 2 |
-| **5%** | 1 | 36.80 ms · 217 rps | **17.55 ms · 456 rps** | **+110%** | 100.0% | 2 |
-| **5%** | 10 | 37.12 ms · 215 rps | **20.91 ms · 383 rps** | **+78%** | 100.0% | 2 |
-| **5%** | 1,000 | 38.89 ms · 206 rps | **23.23 ms · 344 rps** | **+67%** | 100.0% | 2 |
-| **10%** | 1 | 35.99 ms · 222 rps | **18.59 ms · 430 rps** | **+94%** | 100.0% | 2 |
-| **10%** | 1,000 | 36.41 ms · 220 rps | **25.98 ms · 308 rps** | **+40%** | 100.0% | 2 |
+| **1** | 23.3 ms · 343 req/s | **16.6 ms · 481 req/s** | **+40%** | 100.0% | 2 |
+| **10** | 22.9 ms · 350 req/s | **21.7 ms · 369 req/s** | **+5%** | 100.0% | 2 |
+| **50** | 25.4 ms · 315 req/s | **17.0 ms · 470 req/s** | **+49%** | 100.0% | 3 |
+| **100** | 26.5 ms · 302 req/s | **16.3 ms · 491 req/s** | **+63%** | 100.0% | 3 |
+| **500** | 24.4 ms · 329 req/s | **16.3 ms · 490 req/s** | **+49%** | 100.0% | 4 |
+| **1,000** | 24.0 ms · 333 req/s | **16.9 ms · 473 req/s** | **+42%** | 100.0% | 4 |
+| **2,000** | 23.3 ms · 343 req/s | **16.5 ms · 485 req/s** | **+41%** | 100.0% | 6 |
 
 ---
 
-## 4. Sweep 4 — Complex Multi-Tenant Scenarios (`scripts/04-complex-sweep.sh`)
+### 4.2 Scaling Active Tenants on the Heavy Enterprise Screen (`1` to `1,000` Uniform Tenants — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql))
 
-To evaluate how PgCache behaves on heavy relational workloads beyond primary-key and single-join lookups, we executed four complex multi-tenant SQL suites under [`workload/`](../../workload/) on **both 3-node DigitalOcean Kubernetes (DOKS)** and **Local Docker**:
-1. **[`complex-search.sql`](../../workload/complex-search.sql)** (4 statements): Substring `ILIKE '%...%'` text searches across customer emails/names, product names, seller names, and review bodies combined with 2-to-6 table `INNER JOIN` and `LEFT JOIN` chains.
-2. **[`complex-joins.sql`](../../workload/complex-joins.sql)** (4 statements): Deep 4-to-6 table `INNER JOIN` and `LEFT JOIN` chains (`orders -> customer -> order_item -> product -> category -> seller -> review`), including customer cohort retention (`LEFT JOIN orders`) and unreviewed product inventory (`LEFT JOIN review`).
-3. **[`complex-analytics.sql`](../../workload/complex-analytics.sql)** (4 statements): Multi-dimensional `GROUP BY` rollups with conditional `FILTER (WHERE ...)`, `CASE WHEN` fulfillment & price-tier buckets, and `HAVING` thresholds.
-4. **[`complex-dashboard.sql`](../../workload/complex-dashboard.sql)** (8 statements): Unified enterprise analytics & search screen combining 2 search queries, 3 deep multi-table `JOIN` / `LEFT JOIN` queries, and 3 heavy analytical rollups.
+Raw log: [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt)
 
-### 4.1 Scenario Comparison (`TENANTS=200`, `CLIENTS=8`) — 3-Node DOKS vs. Local Docker
-
-Raw logs: [`run-complex-scenarios-doks.txt`](run-complex-scenarios-doks.txt) (DOKS) · [`run-complex-scenarios.txt`](run-complex-scenarios.txt) (Docker)
-
-| Scenario | Stmts | DOKS Origin (Path A) | DOKS PgCache 0.7.1 (Path B) | DOKS Gain (Speedup) | Docker Origin (Path A) | Docker PgCache 0.7.1 (Path B) | Docker Gain (Speedup) | Hit Ratio |
-|---|---:|---|---|---:|---|---|---:|---:|
-| **`dash_base`** (`dashboard.sql`) | 8 | 23.06 ms · 347 rps | **15.92 ms · 503 rps** | **+45% (1.45×)** | 37.61 ms · 213 rps | **16.05 ms · 498 rps** | **+134% (2.3×)** | 100.0% |
-| **`search`** (`complex-search.sql`) | 4 | 74.26 ms · 108 rps | **5.04 ms · 1,586 rps** | **+1,369% (14.7×)** | 88.67 ms · 90 rps | **1.53 ms · 5,223 rps** | **+5,703% (58.0×)** | 100.0% |
-| **`joins`** (`complex-joins.sql`) | 4 | 148.87 ms · 54 rps | **4.73 ms · 1,692 rps** | **+3,033% (31.3×)** | 121.46 ms · 66 rps | **1.25 ms · 6,426 rps** | **+9,636% (97.4×)** | 100.0% |
-| **`analytics`** (`complex-analytics.sql`) | 4 | 102.38 ms · 78 rps | **5.69 ms · 1,406 rps** | **+1,703% (18.0×)** | 92.31 ms · 87 rps | **1.39 ms · 5,737 rps** | **+6,494% (65.9×)** | 100.0% |
-| **`cplx_dash`** (`complex-dashboard.sql`) | 8 | 204.39 ms · 39 rps | **11.50 ms · 696 rps** | **+1,685% (17.8×)** | 209.62 ms · 38 rps | **2.86 ms · 2,798 rps** | **+7,263% (73.6×)** | 100.0% |
-
-**Why Complex Queries Achieve 15×–31× Speedup on DOKS (and 58×–97× in Docker)**:
-- In PgCache 0.7.1, query caching operates in two distinct tiers:
-  1. **Table-Level Subsumption (`public.*`)**: Base tables (`orders`, `order_item`, `product`, `customer`, `review`, `seller`, `category`) are populated in PgCache's embedded PostgreSQL instance. If a query hits `public.*` directly (`pgcache_cache_mv_fallthrough`), PgCache executes the SQL locally (~15.9 ms on DOKS / ~16.1 ms in Docker for the 8 lightweight statements in `dash_base`).
-  2. **Materialized View Admission Gate (`pgcache_mv.q_<hash>`)**: When a query has `OFFSET 0` (no positive `OFFSET`), groups on non-nullable entity keys (`mv=true`), and either scans `>= 1,000` pre-aggregation rows (`--mv_compute_min_rows=1000`) or achieves a `>= 10:1` row reduction ratio (`--mv_size_ratio=10`), PgCache admits the query into its Materialized View engine (`pgcache_cache_mv_gate{outcome="admit"}`).
-- On **3-node DOKS**, each 4-statement complex suite pays 4 cross-node network round-trips (~3.5 ms network floor) plus ~1.2–2.0 ms of MV read execution (`4.73–5.69 ms` total vs `74.3–148.9 ms` on Origin — **14.7× to 31.3× faster**), while the 8-statement `cplx_dash` screen drops from **204.39 ms (`39 rps`)** to **11.50 ms (`696 rps`, 17.8× faster)** — proving that as Origin query complexity grows, the fixed inter-node network floor becomes a tiny fraction of total execution time.
-
-### 4.2 Complex Tenant Scaling (`1` to `1,000` Tenants on `complex-dashboard.sql`, `CLIENTS=8`) — 3-Node DOKS vs. Local Docker
-
-Raw logs: [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt) (DOKS) · [`run-complex-tenants.txt`](run-complex-tenants.txt) (Docker)
-
-| Active Tenants | DOKS Origin | DOKS PgCache 0.7.1 | DOKS Gain (Speedup) | DOKS Hit (Warm) | Docker Origin | Docker PgCache 0.7.1 | Docker Gain (Speedup) | Docker Hit (Warm) |
-|---:|---|---|---:|---:|---|---|---:|---:|
-| **1** | 206.80 ms · 39 rps | **9.19 ms · 871 rps** | **+2,133% (22.3×)** | 100.0% (2) | 208.31 ms · 38 rps | **2.28 ms · 3,511 rps** | **+9,139% (92.4×)** | 100.0% (2) |
-| **10** | 198.24 ms · 40 rps | **9.58 ms · 835 rps** | **+1,988% (20.9×)** | 100.0% (2) | 168.59 ms · 47 rps | **2.24 ms · 3,579 rps** | **+7,515% (76.1×)** | 100.0% (2) |
-| **50** | 227.49 ms · 35 rps | **10.81 ms · 740 rps** | **+2,014% (21.1×)** | 100.0% (6) | 184.07 ms · 43 rps | **2.27 ms · 3,532 rps** | **+8,114% (82.1×)** | 100.0% (3) |
-| **200** | 212.77 ms · 38 rps | **11.23 ms · 712 rps** | **+1,774% (18.7×)** | 100.0% (7) | 206.95 ms · 39 rps | **2.90 ms · 2,763 rps** | **+6,985% (70.8×)** | 100.0% (8) |
-| **500** | 223.87 ms · 36 rps | **18.40 ms · 435 rps** | **+1,108% (12.1×)** | 100.0% (8) | 212.27 ms · 38 rps | **67.55 ms · 118 rps** | **+211% (3.1×)** | 97.4% (8) |
-| **1,000** *(cold 8-pass cap)* | 210.14 ms · 38 rps | 251.39 ms · 32 rps | -16% (0.84×) | 68.1% (4) | 226.02 ms · 35 rps | 517.86 ms · 15 rps | -57% (0.43×) | 62.7% (5) |
-
-**Finding — Tenant Working-Set Scaling on Dedicated DOKS Nodes vs. Shared-CPU Docker**:
-- From **1 to 500 active tenants** (`8` to `4,000` distinct 4–6 table Materialized Views), the dedicated 4-vCPU DOKS PgCache node (`NUM_WORKERS=8`, `PGCACHE_POPULATION_WORKERS_MIN=4`) warms **100.0%** of the working set and delivers **12.1× to 22.3× higher throughput (`+1,108%` at 500 tenants and `+1,774%` to `+2,133%` at 1–200 tenants)**.
-- Notably, at **500 tenants**, DOKS reaches **100.0% hit ratio (`435 rps` at `18.40 ms`, +1,108%)** compared to `97.4%` (`118 rps` at `67.55 ms`, +211%) in single-host Docker because `origin` and `pgcache` run on isolated physical nodes without competing for CPU during background MV construction.
-- At **1,000 tenants** (`8,000` distinct complex queries), uniform random sampling across 1,000 tenants (`\set t random(1, 1000)`) within bounded 15s warm-up passes reaches **68.1% hit ratio on DOKS** (`32 rps` vs `38 rps`, `-16%`) and **62.7% in Docker**.
-
-### 4.3 Complex Concurrency Scaling (`1` to `32` Clients on `complex-dashboard.sql`, `TENANTS=200`) — 3-Node DOKS vs. Local Docker
-
-Raw logs: [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt) (DOKS) · [`run-complex-clients.txt`](run-complex-clients.txt) (Docker)
-
-| Clients | DOKS Origin | DOKS PgCache 0.7.1 | DOKS Gain (Speedup) | Docker Origin | Docker PgCache 0.7.1 | Docker Gain (Speedup) | Hit Ratio | Warm Passes |
-|---:|---|---|---:|---|---|---:|---:|---:|
-| **1** | 100.60 ms · 10 rps | **7.14 ms · 140 rps** | **+1,300% (14.0×)** | 84.83 ms · 12 rps | **1.73 ms · 578 rps** | **+4,717% (48.2×)** | 100.0% | 2 |
-| **4** | 129.45 ms · 31 rps | **8.60 ms · 465 rps** | **+1,400% (15.0×)** | 92.22 ms · 43 rps | **2.26 ms · 1,770 rps** | **+4,016% (41.2×)** | 100.0% | 2 |
-| **8** | 212.81 ms · 38 rps | **10.48 ms · 763 rps** | **+1,908% (20.1×)** | 194.69 ms · 41 rps | **2.66 ms · 3,003 rps** | **+7,224% (73.2×)** | 100.0% | 2 |
-| **16** | 406.90 ms · 39 rps | **18.06 ms · 886 rps** | **+2,172% (22.7×)** | 400.89 ms · 40 rps | **4.60 ms · 3,475 rps** | **+8,588% (86.9×)** | 100.0% | 2 |
-| **32** | 835.52 ms · 38 rps | **31.36 ms · 1,020 rps** | **+2,584% (26.8×)** | 862.44 ms · 37 rps | **9.20 ms · 3,478 rps** | **+9,300% (94.0×)** | 100.0% | 2 |
-
-- **Pure Single-Client Speedup (`CLIENTS=1`)**: With zero queueing anywhere, an 8-statement complex analytics & search screen drops from **100.60 ms (`10 rps`)** to **7.14 ms (`140 rps`, 14.0× faster)** across the DOKS cloud network, and from **84.83 ms (`12 rps`)** to **1.73 ms (`578 rps`, 48.2× faster)** in local Docker.
-- **High Concurrency (`CLIENTS=16..32`)**: On both DOKS and Docker, Origin saturates at **37–40 rps** with latency climbing to **835–862 ms** (~0.85 seconds per screen render). On DOKS, PgCache scales cleanly to **1,020 rps** (~8,160 complex SQL queries/sec) at **31.36 ms** (**26.8× speedup, +2,584%**), and in Docker to **3,478 rps** at **9.20 ms** (**94.0× speedup, +9,300%**).
-
-### 4.4 Complex Write Invalidation & `INNER JOIN` vs `LEFT JOIN` CDC Behavior (`TENANTS=200`, `CLIENTS=8`) — 3-Node DOKS vs. Local Docker
-
-Raw logs: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt) (DOKS) · [`run-complex-writes.txt`](run-complex-writes.txt) (Docker)
-
-| Write Ratio | Write Tenants | DOKS Origin | DOKS PgCache 0.7.1 | DOKS Gain | DOKS Hit | Docker Origin | Docker PgCache 0.7.1 | Docker Gain | Docker Hit |
-|---:|---:|---|---|---:|---:|---|---|---:|---:|
-| **0%** | 200 | 189.81 ms · 42 rps | **11.13 ms · 719 rps** | **+1,612%** | 100.0% | 196.12 ms · 41 rps | **2.62 ms · 3,059 rps** | **+7,361%** | 100.0% |
-| **5%** | 1 | 186.66 ms · 43 rps | **166.17 ms · 48 rps** | **+12%** | 75.0% | 191.28 ms · 42 rps | **166.86 ms · 48 rps** | **+14%** | 67.6% |
-| **5%** | 10 | 182.40 ms · 44 rps | 194.35 ms · 41 rps | -7% | 65.4% | 216.04 ms · 37 rps | **167.12 ms · 48 rps** | **+30%** | 63.3% |
-| **5%** | 200 | 191.20 ms · 42 rps | 201.48 ms · 40 rps | -5% | 65.7% | 210.42 ms · 38 rps | 220.45 ms · 36 rps | -5% | 64.0% |
-| **10%** | 1 | 177.65 ms · 45 rps | **154.73 ms · 52 rps** | **+16%** | 63.1% | 206.33 ms · 39 rps | **163.51 ms · 49 rps** | **+26%** | 63.1% |
-| **10%** | 200 | 167.93 ms · 48 rps | 191.79 ms · 42 rps | -12% | 64.8% | 213.03 ms · 38 rps | **195.50 ms · 41 rps** | **+8%** | 62.5% |
-
-**Why Hit Ratio Settles at ~62.5%–75.0% (`>= 5/8`) Under `UPDATE orders` Writes (`INNER JOIN` vs. `LEFT JOIN`)**:
-- In `complex-dashboard.sql`, all 8 statements reference `orders`:
-  1. **5 `INNER JOIN` Statements (`#1`, `#2`, `#4`, `#6`, `#8` = `62.5%` of queries)**: Because these queries include explicit `WHERE ... AND o.tenant_id = :t` equality predicates, PgCache scopes their `orders` table dependency to tenant `:t`, applies non-key `UPDATE orders SET total = total + 1` events in-place via logical replication (`cdc_update`), and rebuilds only the affected tenant's Materialized Views (`pgcache_cache_mv_rebuilds`). These 5 statements achieve a **100% cache hit rate** across read-only tenants and in-place hits on updated tenants.
-  2. **3 `LEFT JOIN` Statements (`#3`, `#5`, `#7` = `37.5%` of queries)**: These queries use `FROM customer c LEFT JOIN orders o ON o.customer_id = c.id AND o.tenant_id = :t` to preserve customers with zero orders (`o.id IS NULL`). Because `o.tenant_id = :t` is an outer-join `ON` condition rather than a top-level `WHERE` filter, PgCache conservatively invalidates registered outer-join queries referencing `orders` whenever `orders` receives a write.
-- When writes are concentrated on a single tenant (`5:1` and `10:1`), PgCache outperforms Origin by **+12% to +16% on DOKS** (with **75.0% and 63.1% hit ratios**) and **+14% to +26% in Docker**, while distributed writes across all 200 tenants (`5:200`, `10:200`) maintain **64.8%–65.7% hit ratios** and near-parity throughput (`40–42 rps` vs `42–48 rps` on DOKS; `36–41 rps` vs `38 rps` in Docker) with **`pgcache_queries_cache_error == 0`**.
+| Active Tenants (Uniform) | PostgreSQL Direct (Path A) | PgCache 0.7.1 (Path B) | Speedup | Hit Ratio | Warm-up Passes |
+|---:|---|---|---:|---:|---:|
+| **1** | 206.8 ms · 39 req/s | **9.2 ms · 871 req/s** | **22.3× (+2,133%)** | 100.0% | 2 |
+| **10** | 198.2 ms · 40 req/s | **9.6 ms · 835 req/s** | **20.9× (+1,988%)** | 100.0% | 2 |
+| **50** | 227.5 ms · 35 req/s | **10.8 ms · 740 req/s** | **21.1× (+2,014%)** | 100.0% | 6 |
+| **200** | 212.8 ms · 38 req/s | **11.2 ms · 712 req/s** | **18.7× (+1,774%)** | 100.0% | 7 |
+| **500** | 223.9 ms · 36 req/s | **18.4 ms · 435 req/s** | **12.1× (+1,108%)** | 100.0% | 8 |
+| **1,000** *(8-pass warm cap)* | 210.1 ms · 38 req/s | 251.4 ms · 32 req/s | 0.84× (-16%) | 68.1% | 4 |
 
 ---
 
-## 5. Raw Artifacts
+### 4.3 Scaling Concurrent Users (`1` to `32` Clients — [`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql))
 
-- **3-Node DigitalOcean Kubernetes (DOKS)**:
-  - Baseline DOKS TSV: [`results-doks.tsv`](results-doks.tsv)
-  - Complex scenarios DOKS TSV: [`results-complex-doks.tsv`](results-complex-doks.tsv)
-  - Differential correctness, cacheability & MV gate log (DOKS): [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
-  - Baseline Sweep 1 (Tenants 1..2000) raw log (DOKS): [`run-tenants-doks.txt`](run-tenants-doks.txt)
-  - Complex Sweep 4.1 (Scenario comparison) raw log (DOKS): [`run-complex-scenarios-doks.txt`](run-complex-scenarios-doks.txt)
-  - Complex Sweep 4.2 (Tenant scaling) raw log (DOKS): [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt)
-  - Complex Sweep 4.3 (Concurrency scaling) raw log (DOKS): [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt)
-  - Complex Sweep 4.4 (Write invalidation) raw log (DOKS): [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)
-- **Local Docker**:
-  - Baseline Docker TSV: [`results-docker.tsv`](results-docker.tsv) / [`results.tsv`](results.tsv)
-  - Complex scenarios Docker TSV: [`results-complex.tsv`](results-complex.tsv) / [`results-complex-docker.tsv`](results-complex-docker.tsv)
-  - Differential correctness, cacheability & MV gate log (Docker): [`verify-correctness.txt`](verify-correctness.txt) / [`verify-correctness-docker.txt`](verify-correctness-docker.txt)
-  - Baseline Sweep 1 (Tenants) raw log (Docker): [`run-tenants-docker.txt`](run-tenants-docker.txt) / [`run-tenants.txt`](run-tenants.txt)
-  - Baseline Sweep 2 (Concurrency) raw log (Docker): [`run-clients.txt`](run-clients.txt)
-  - Baseline Sweep 3 (Writes) raw log (Docker): [`run-writes.txt`](run-writes.txt)
-  - Complex Sweep 4.1–4.4 raw logs (Docker): [`run-complex-scenarios.txt`](run-complex-scenarios.txt), [`run-complex-tenants.txt`](run-complex-tenants.txt), [`run-complex-clients.txt`](run-complex-clients.txt), [`run-complex-writes.txt`](run-complex-writes.txt)
+Raw log: [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt)
+
+| Concurrent Clients | PostgreSQL Direct (Path A) | PgCache 0.7.1 (Path B) | Speedup | Hit Ratio |
+|---:|---|---|---:|---:|
+| **1** | 100.6 ms · 10 req/s | **7.1 ms · 140 req/s** | **14.0× (+1,300%)** | 100.0% |
+| **4** | 129.5 ms · 31 req/s | **8.6 ms · 465 req/s** | **15.0× (+1,400%)** | 100.0% |
+| **8** | 212.8 ms · 38 req/s | **10.5 ms · 763 req/s** | **20.1× (+1,908%)** | 100.0% |
+| **16** | 406.9 ms · 39 req/s | **18.1 ms · 886 req/s** | **22.7× (+2,172%)** | 100.0% |
+| **32** | 835.5 ms · 38 req/s | **31.4 ms · 1,020 req/s** | **26.8× (+2,584%)** | 100.0% |
+
+---
+
+### 4.4 Warm Cache Under Live Writes ([`workload/complex-dashboard.sql`](../../workload/complex-dashboard.sql) + `UPDATE orders`)
+
+Unlike Scenario 8 in Section 3 (which started from a 100% cold pod restart), this test **warms the 200-tenant cache first** and then introduces 5% or 10% live writes:
+- **5 of the 8 queries (`62.5%`) use `INNER JOIN`** with `WHERE o.tenant_id = :t`, allowing PgCache to update the tenant's data in-place via CDC replication and keep serving **100% cache hits**.
+- **3 of the 8 queries (`37.5%`) use `LEFT JOIN`** (where `o.tenant_id = :t` sits inside the outer join's `ON` clause to preserve zero-order customers), which PgCache conservatively invalidates whenever `orders` changes.
+
+Raw log: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)
+
+| Write Ratio | Tenants Receiving Writes | PostgreSQL Direct (Path A) | PgCache 0.7.1 (Path B) | Gain / Loss | Hit Ratio |
+|---:|---:|---|---|---:|---:|
+| **0% (Read-Only)** | — | 189.8 ms · 42 req/s | **11.1 ms · 719 req/s** | **+1,612% (17.1×)** | 100.0% |
+| **5% Writes** | 1 hot tenant | 186.7 ms · 43 req/s | **166.2 ms · 48 req/s** | **+12%** | 75.0% |
+| **5% Writes** | 10 tenants | 182.4 ms · 44 req/s | 194.4 ms · 41 req/s | -7% | 65.4% |
+| **5% Writes** | All 200 tenants | 191.2 ms · 42 req/s | 201.5 ms · 40 req/s | -5% | 65.7% |
+| **10% Writes** | 1 hot tenant | 177.7 ms · 45 req/s | **154.7 ms · 52 req/s** | **+16%** | 63.1% |
+| **10% Writes** | All 200 tenants | 167.9 ms · 48 req/s | 191.8 ms · 42 req/s | -12% | 64.8% |
+
+---
+
+## 5. Correctness Gate Summary ([`scripts/verify-correctness.sh`](../../scripts/verify-correctness.sh))
+
+Full output log: [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
+
+| Stage | What It Verifies | Result |
+|---|---|---|
+| **Stage 1: Baseline Queries (8/8)** | Runs all 8 queries from [`workload/dashboard.sql`](../../workload/dashboard.sql) on PostgreSQL and PgCache and compares every row byte-for-byte. | **PASS (8/8 identical, 100% cacheable)** |
+| **Stage 2: Complex Static Queries (12/12)** | Runs all 12 complex queries from [`complex-search.sql`](../../workload/complex-search.sql), [`complex-joins.sql`](../../workload/complex-joins.sql), and [`complex-analytics.sql`](../../workload/complex-analytics.sql) across 3 passes. | **PASS (12/12 identical, 100% MV hit rate)** |
+| **Stage 3: Live CDC Mutation (`UPDATE` + `INSERT`)** | Executes live `UPDATE orders`, `UPDATE order_item`, and `INSERT INTO order_item` on PostgreSQL, waits for CDC replication, and re-verifies all 12 complex queries on PgCache. | **PASS (12/12 identical after live writes)** |
+
+---
+
+## 6. Raw Benchmark Files & Logs
+
+- **Part 2 Follow-Up Study (`results/0.7.1_v2/`)**: [`results/0.7.1_v2/README.md`](../0.7.1_v2/README.md)
+- **SQL Workloads & Schema Documentation**: [`workload/README.md`](../../workload/README.md)
+- **5-Trial Multi-Run Logs (with Full Pod Recreation)**:
+  - Complex Scenarios (`TRIALS=5`): [`04-complex-scenarios-k8s.txt`](04-complex-scenarios-k8s.txt)
+  - Pareto/Zipfian 80/20 (`TRIALS=5`): [`04-complex-zipfian-k8s.txt`](04-complex-zipfian-k8s.txt)
+  - Cold-Start `UPDATE + INSERT` Writes (`TRIALS=5`): [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt)
+- **Single-Pass Scaling & Correctness Logs**:
+  - Correctness Gate Output: [`verify-correctness-doks.txt`](verify-correctness-doks.txt)
+  - Baseline Tenant Sweep (`1..2000`): [`run-tenants-doks.txt`](run-tenants-doks.txt) · [`results-doks.tsv`](results-doks.tsv)
+  - Complex Scenario Comparison: [`run-complex-scenarios-doks.txt`](run-complex-scenarios-doks.txt) · [`results-complex-doks.tsv`](results-complex-doks.tsv)
+  - Complex Tenant Scaling (`1..1000`): [`run-complex-tenants-doks.txt`](run-complex-tenants-doks.txt)
+  - Complex Concurrency Scaling (`1..32` clients): [`run-complex-clients-doks.txt`](run-complex-clients-doks.txt)
+  - Complex Warm-Cache Write Sweep: [`run-complex-writes-doks.txt`](run-complex-writes-doks.txt)

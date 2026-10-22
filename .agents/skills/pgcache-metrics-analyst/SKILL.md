@@ -25,13 +25,15 @@ curl -sf http://127.0.0.1:59090/metrics | grep -E "^pgcache_(queries_(total|cach
 | `pgcache_queries_uncacheable` | `0` delta during read sweeps | Query uses non-immutable functions, expression `GROUP BY`, or arithmetic in `OFFSET` |
 | `pgcache_queries_allowlist_skipped` | `0` | A table in the query is missing from `ALLOWED_TABLES` |
 | `pgcache_queries_cache_error` | `0` | Internal cache execution or embedded PostgreSQL recovery error (check for OOM `signal 9` in `/var/lib/postgresql/data/pgdata/logfile`) |
-| `pgcache_queries_cache_hit` / `miss` | Hit ratio settles `>= 99%` after `warm_until_settled` | Cache capacity exhaustion, missing tenant literal predicates on joined tables causing cross-tenant invalidations, or insufficient warm-up |
+| `pgcache_queries_cache_hit` / `miss` / `uncacheable` | True Hit Ratio (`hit / (hit + miss + uncacheable)`) settles `>= 99%` after `warm_until_settled` | Always include `uncacheable` in the denominator so uncacheable queries never hide behind a 100% cacheable-only hit ratio |
 | `pgcache_cache_mv_gate{outcome="admit"}` | Increments once per admitted complex query signature | Complex query admitted for Materialized View acceleration |
 | `pgcache_cache_mv_gate{outcome="reject"}` | `0` for complex queries (`OFFSET 0`) | Query uses `OFFSET > 0` or unsupported MV construct; falls back to base-table re-execution |
 | `pgcache_cache_mv_hits` / `mv_fallthrough` | `mv_hits` dominates after Pass 2 (`mv_fallthrough` settles near `0`) | If `mv_fallthrough` remains high, MVs are still building or being rebuilt/evicted |
-| `pgcache_cache_memory_used_bytes` | Below `pgcache_cache_memory_budget_bytes` (`MEMORY_LIMIT`) | In shared Docker VMs, set `MEMORY_LIMIT` (e.g. `3758096384` for 3.5 GiB) so `origin + pgcache` never trigger Linux kernel OOM-killer `SIGKILL` |
+| `pgcache_cache_memory_used_bytes` | Below `pgcache_cache_memory_budget_bytes` (`MEMORY_LIMIT`) | In 8 GB nodes, set `MEMORY_LIMIT` (e.g. `3758096384` for 3.5 GiB) so `pgcache` never triggers Linux kernel OOM-killer `SIGKILL` |
 
-## 2. Analytical Framework for Comparing Simple vs Complex Workloads
+## 2. Analytical Framework for Comparing Simple vs Complex Workloads (3-Node Kubernetes Only)
+
+> **Reporting Policy**: Never include local Docker performance numbers in published tables (`README.md`, `README-pt.md`, `results/`). Local Docker is used strictly to assemble the environment and run functional/correctness checks (`verify-correctness.sh`). All published performance metrics MUST come from 3-node Kubernetes (DOKS / AKS) with multi-trial statistical runs (`TRIALS=3` or `5`, reporting mean, `-Δ/+Δ` spread, and `stddev`).
 
 When reporting benchmark findings, always contrast **Simple Operational Workloads (`dashboard.sql`)** against **Complex Analytical & Search Workloads (`complex-*.sql`)** across four axes:
 

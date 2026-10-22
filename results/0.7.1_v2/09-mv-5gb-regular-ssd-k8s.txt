@@ -1,0 +1,207 @@
+=== Setup Configuration ===
+Environment:     k8s
+Scale Factor:    10 (Target orders: 5000000)
+Tenants:         1000
+Force Reseed:    0
+--- Database already seeded with SCALE=10 (5000000 orders, 1000 tenants) ---
+--- copying workload scripts ---
+--- sizes ---
+order_item   20000000  2108 MB
+orders        4999984  589 MB
+review        1500000  213 MB
+customer      1000000  94 MB
+product       1000000  108 MB
+seller            500  96 kB
+category           50  32 kB
+TOTAL 3120 MB
+========================================================================
+ SWEEP 9: 5 GB (SCALE=10) Memory-Constrained NVMe vs SSD Study (TRIALS=3)
+ Disk Tier: DO-Regular-SSD-5GB (s-4vcpu-8gb, Local SSD, 384MB Origin SB / 128MB PgCache SB / 0 Memo) | Concurrency: c=8, j=4 | Duration: 20s
+========================================================================
+partitioned roll out complete: 1 new pods have been updated...
+deployment "loadgen" successfully rolled out
+deployment "pgcache" successfully rolled out
+--> Node Hardware & Topology:
+NAME                                 STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP      OS-IMAGE                       KERNEL-VERSION                CONTAINER-RUNTIME
+pgcache-5g-ssd-default-pool-3b0j69   Ready    <none>   83m   v1.37.0   10.116.0.3    143.198.126.70   Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+pgcache-5g-ssd-default-pool-3b0jt3   Ready    <none>   83m   v1.37.0   10.116.0.5    142.93.253.48    Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+pgcache-5g-ssd-default-pool-3b0jtn   Ready    <none>   83m   v1.37.0   10.116.0.4    147.182.222.92   Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+
+--> Running Storage & CPU Micro-Benchmark inside PgCache Pod (Local Node Disk):
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+--- CPU Model ---
+model name	: DO-Regular
+cpu MHz		: 2294.608
+--- Memory & Cgroup Limits (PgCache Pod) ---
+cgroup memory.max: unknown
+effective_cache_size|32768|8kB
+fsync|on|
+maintenance_work_mem|52224|kB
+max_connections|500|
+shared_buffers|16384|8kB
+work_mem|10240|kB
+--- Sequential Sync Write 256MB (/var/lib/postgresql) ---
+256+0 records in
+256+0 records out
+268435456 bytes (256.0MB) copied, 1.280946 seconds, 199.9MB/s
+--- PostgreSQL pg_test_fsync (3s per method on /var/lib/postgresql) ---
+3 seconds per test
+O_DIRECT supported on this platform for open_datasync and open_sync.
+
+Compare file sync methods using one 8kB write:
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                      1663.493 ops/sec     601 usecs/op
+        fdatasync                          1273.234 ops/sec     785 usecs/op
+        fsync                               664.124 ops/sec    1506 usecs/op
+        fsync_writethrough                              n/a
+        open_sync                           857.730 ops/sec    1166 usecs/op
+
+Compare file sync methods using two 8kB writes:
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                       533.602 ops/sec    1874 usecs/op
+        fdatasync                          1166.596 ops/sec     857 usecs/op
+        fsync                               816.829 ops/sec    1224 usecs/op
+        fsync_writethrough                              n/a
+        open_sync                           464.143 ops/sec    2155 usecs/op
+
+Compare open_sync with different write sizes:
+(This is designed to compare the cost of writing 16kB in different write
+open_sync sizes.)
+         1 * 16kB open_sync write           905.502 ops/sec    1104 usecs/op
+         2 *  8kB open_sync writes          476.100 ops/sec    2100 usecs/op
+         4 *  4kB open_sync writes          261.892 ops/sec    3818 usecs/op
+         8 *  2kB open_sync writes           91.382 ops/sec   10943 usecs/op
+        16 *  1kB open_sync writes           47.423 ops/sec   21087 usecs/op
+
+Test if fsync on non-write file descriptor is honored:
+(If the times are similar, fsync() can sync data written on a different
+descriptor.)
+        write, fsync, close                 995.836 ops/sec    1004 usecs/op
+        write, close, fsync                1273.557 ops/sec     785 usecs/op
+
+Non-sync'ed 8kB writes:
+        write                            575946.443 ops/sec       2 usecs/op
+
+--> Origin Database Size & Memory Settings (SCALE=10, ~5 GB Dataset):
+Origin DB Size: 3120 MB
+fsync=on
+maintenance_work_mem=524288kB
+max_wal_size=4096MB
+shared_buffers=491528kB
+work_mem=16384kB
+
+========================================================================
+ Phase 1: 5 GB Dataset — Cold Creation, Wide MVs (LIMIT 500), Zipfian & CDC (c=16)
+========================================================================
+mv5g_stress  A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+
+>>> [mv5g_cold0s] Trial 1/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_cold0s] Trial 1/3 -- Path B (PgCache fixed warmup=0s)
+  [Trial 1/3] mv5g_cold0s  | A: 3588.347 ms (2 rps) | B: 6799.758 ms (1 rps) | hit: 2.08% | gain: -50.0% | warm: 0s
+
+>>> [mv5g_cold0s] Trial 2/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_cold0s] Trial 2/3 -- Path B (PgCache fixed warmup=0s)
+  [Trial 2/3] mv5g_cold0s  | A: 3792.340 ms (2 rps) | B: 7775.765 ms (1 rps) | hit: 2.27% | gain: -50.0% | warm: 0s
+
+>>> [mv5g_cold0s] Trial 3/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_cold0s] Trial 3/3 -- Path B (PgCache fixed warmup=0s)
+  [Trial 3/3] mv5g_cold0s  | A: 3795.424 ms (2 rps) | B: 6983.564 ms (1 rps) | hit: 6.52% | gain: -50.0% | warm: 0s
+  --- [I/O Audit: mv5g_cold0s (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=6974776 | blks_hit(ram)=2640356603 | hit_ratio=99.74% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+PGCACHE_PG  | size=92 MB | blks_read(disk)=16 | blks_hit(ram)=6671556 | hit_ratio=100.00% | temp_bytes=0 bytes
+PGCACHE_TBL | public_tables=7 (30 MB) | mv_tables=3 (240 kB)
+mv5g_cold0s   3725.370      2   7186.362      1     3.6%     -50%   0.0  | A_rps_dev: +0/+0 (sd 0.0) | B_rps_dev: +0/+0 (sd 0.0) | gain_dev: +0%/+0%
+
+>>> [mv5g_warm30s] Trial 1/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_warm30s] Trial 1/3 -- Path B (PgCache fixed warmup=30s)
+  [Trial 1/3] mv5g_warm30s | A: 3695.976 ms (2 rps) | B: 4453.457 ms (2 rps) | hit: 34.68% | gain: +0.0% | warm: 30s
+
+>>> [mv5g_warm30s] Trial 2/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_warm30s] Trial 2/3 -- Path B (PgCache fixed warmup=30s)
+  [Trial 2/3] mv5g_warm30s | A: 3626.130 ms (2 rps) | B: 6074.618 ms (1 rps) | hit: 30.43% | gain: -50.0% | warm: 30s
+
+>>> [mv5g_warm30s] Trial 3/3 -- Path A (Origin 5GB, cold OS cache)
+
+>>> [mv5g_warm30s] Trial 3/3 -- Path B (PgCache fixed warmup=30s)
+  [Trial 3/3] mv5g_warm30s | A: 3989.525 ms (2 rps) | B: 3082.783 ms (3 rps) | hit: 37.36% | gain: +50.0% | warm: 30s
+  --- [I/O Audit: mv5g_warm30s (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=6974778 | blks_hit(ram)=3069393814 | hit_ratio=99.77% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+PGCACHE_PG  | size=168 MB | blks_read(disk)=3792 | blks_hit(ram)=20411297 | hit_ratio=99.98% | temp_bytes=0 bytes
+PGCACHE_TBL | public_tables=7 (62 MB) | mv_tables=18 (1440 kB)
+mv5g_warm30s  3770.544      2   4536.953      2    34.2%      +0%  30.0  | A_rps_dev: +0/+0 (sd 0.0) | B_rps_dev: -1/+1 (sd 1.0) | gain_dev: -50%/+50%
+
+
+  [Trial 1/3] mv5g_heavy   | A: 4307.346 ms (2 rps) | B: 9165.567 ms (1 rps) | hit: 54.17% | gain: -50.0% | warm: 4
+
+
+  [Trial 2/3] mv5g_heavy   | A: 3882.973 ms (2 rps) | B: 9613.005 ms (1 rps) | hit: 67.32% | gain: -50.0% | warm: 4
+
+
+  [Trial 3/3] mv5g_heavy   | A: 4024.356 ms (2 rps) | B: 2432.134 ms (3 rps) | hit: 61.18% | gain: +50.0% | warm: 4
+  --- [I/O Audit: mv5g_heavy (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=6974795 | blks_hit(ram)=3648192871 | hit_ratio=99.81% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+PGCACHE_PG  | size=158 MB | blks_read(disk)=8862 | blks_hit(ram)=30465469 | hit_ratio=99.97% | temp_bytes=0 bytes
+PGCACHE_TBL | public_tables=7 (80 MB) | mv_tables=23 (1840 kB)
+mv5g_heavy    4071.558      2   7070.235      2    60.9%     -17%   4.0  | A_rps_dev: +0/+0 (sd 0.0) | B_rps_dev: -1/+1 (sd 1.2) | gain_dev: -33%/+67%
+
+
+  [Trial 1/3] mv5g_dash    | A: 11476.459 ms (1 rps) | B: 37310.635 ms (0 rps) | hit: 53.72% | gain: -100.0% | warm: 4
+
+
+  [Trial 2/3] mv5g_dash    | A: 11642.307 ms (1 rps) | B: 6071.704 ms (1 rps) | hit: 75.63% | gain: +0.0% | warm: 4
+
+
+  [Trial 3/3] mv5g_dash    | A: 10701.713 ms (1 rps) | B: 10690.061 ms (1 rps) | hit: 53.59% | gain: +0.0% | warm: 4
+  --- [I/O Audit: mv5g_dash (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=6976197 | blks_hit(ram)=4222270864 | hit_ratio=99.84% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+PGCACHE_PG  | size=232 MB | blks_read(disk)=28016 | blks_hit(ram)=50472553 | hit_ratio=99.94% | temp_bytes=0 bytes
+PGCACHE_TBL | public_tables=7 (94 MB) | mv_tables=18 (432 kB)
+mv5g_dash    11273.493      1  18024.133      1    61.0%     -33%   4.0  | A_rps_dev: +0/+0 (sd 0.0) | B_rps_dev: -1/+0 (sd 0.6) | gain_dev: -67%/+33%
+
+
+  [Trial 1/3] mv5g_zipf1000 | A: 21673.313 ms (0 rps) | B: 20053.419 ms (0 rps) | hit: 40.00% | gain: +0.0% | warm: 3
+
+
+  [Trial 2/3] mv5g_zipf1000 | A: 16776.639 ms (0 rps) | B: 24769.122 ms (0 rps) | hit: 38.46% | gain: +0.0% | warm: 3
+
+
+  [Trial 3/3] mv5g_zipf1000 | A: 15475.248 ms (1 rps) | B: 34346.652 ms (0 rps) | hit: 5.56% | gain: -100.0% | warm: 3
+  --- [I/O Audit: mv5g_zipf1000 (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=54167464 | blks_hit(ram)=4937371857 | hit_ratio=98.91% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+PGCACHE_PG  | size=369 MB | blks_read(disk)=75440 | blks_hit(ram)=59478691 | hit_ratio=99.87% | temp_bytes=0 bytes
+PGCACHE_TBL | public_tables=7 (117 MB) | mv_tables=12 (288 kB)
+mv5g_zipf1000 17975.067      0  26389.731      0    28.0%     -33%   3.0  | A_rps_dev: -0/+1 (sd 0.6) | B_rps_dev: +0/+0 (sd 0.0) | gain_dev: -67%/+33%
+
+
+
+
+
+
+  [Trial 1/3] mv5g_cdc9010 | A: 3084.237 ms (3 rps) | B: 4600.592 ms (2 rps) | hit: 14.60% | gain: -33.3% | warm: 4
+
+
+
+
+
+  [Trial 2/3] mv5g_cdc9010 | A: 2891.589 ms (3 rps) | B: 131207.314 ms (0 rps) | hit: 15.62% | gain: -100.0% | warm: 4
+
+
+
+
+
+  [Trial 3/3] mv5g_cdc9010 | A: 3049.196 ms (3 rps) | B: 4409.289 ms (2 rps) | hit: 13.57% | gain: -33.3% | warm: 4
+  --- [I/O Audit: mv5g_cdc9010 (Trial 3)] Origin (:5432) & PgCache Embedded PG (:5433) ---
+ORIGIN_DB   | size=3120 MB | blks_read(disk)=54473878 | blks_hit(ram)=5883855272 | hit_ratio=99.08% | temp_bytes=3054 MB
+Defaulted container "pgcache" out of: pgcache, tune-net-stack (init)
+command terminated with exit code 137
+mv5g_cdc9010  3008.341      3  46739.065      1    14.6%     -56%   4.0  | A_rps_dev: +0/+0 (sd 0.0) | B_rps_dev: -1/+1 (sd 1.2) | gain_dev: -44%/+22%

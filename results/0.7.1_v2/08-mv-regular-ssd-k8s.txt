@@ -1,0 +1,126 @@
+========================================================================
+ SWEEP 8: Materialized View Storage Benchmark (TRIALS=3)
+ Disk Tier: s-4vcpu-8gb (Regular SSD, region=nyc1)
+========================================================================
+partitioned roll out complete: 1 new pods have been updated...
+deployment "loadgen" successfully rolled out
+deployment "pgcache" successfully rolled out
+--> Node Hardware & Topology:
+NAME                                STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP      OS-IMAGE                       KERNEL-VERSION                CONTAINER-RUNTIME
+pgcache-bench-default-pool-3bhpcb   Ready    <none>   28m   v1.37.0   10.116.0.3    159.223.164.25   Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+pgcache-bench-default-pool-3bhpcr   Ready    <none>   28m   v1.37.0   10.116.0.5    162.243.173.31   Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+pgcache-bench-default-pool-3bhpcw   Ready    <none>   28m   v1.37.0   10.116.0.4    167.172.156.98   Debian GNU/Linux 13 (trixie)   6.12.96+deb13-amd64 (amd64)   containerd://2.3.3
+
+--> Running Storage & CPU Micro-Benchmark inside PgCache Pod (Local Node Disk):
+--- CPU Model ---
+model name	: DO-Regular
+cpu MHz		: 2494.134
+--- Sequential Sync Write 256MB (/var/lib/postgresql) ---
+256+0 records in
+256+0 records out
+268435456 bytes (256.0MB) copied, 0.650168 seconds, 393.7MB/s
+--- PostgreSQL pg_test_fsync (3s per method on /var/lib/postgresql) ---
+3 seconds per test
+O_DIRECT supported on this platform for open_datasync and open_sync.
+
+Compare file sync methods using one 8kB write:
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                      5941.540 ops/sec     168 usecs/op
+        fdatasync                          5435.168 ops/sec     184 usecs/op
+        fsync                              2049.630 ops/sec     488 usecs/op
+        fsync_writethrough                              n/a
+        open_sync                          3912.415 ops/sec     256 usecs/op
+
+Compare file sync methods using two 8kB writes:
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                      3241.236 ops/sec     309 usecs/op
+        fdatasync                          5239.134 ops/sec     191 usecs/op
+        fsync                              4219.232 ops/sec     237 usecs/op
+        fsync_writethrough                              n/a
+        open_sync                          3054.566 ops/sec     327 usecs/op
+
+Compare open_sync with different write sizes:
+(This is designed to compare the cost of writing 16kB in different write
+open_sync sizes.)
+         1 * 16kB open_sync write          4960.128 ops/sec     202 usecs/op
+         2 *  8kB open_sync writes         3142.416 ops/sec     318 usecs/op
+         4 *  4kB open_sync writes         1618.134 ops/sec     618 usecs/op
+         8 *  2kB open_sync writes          615.941 ops/sec    1624 usecs/op
+        16 *  1kB open_sync writes          369.002 ops/sec    2710 usecs/op
+
+Test if fsync on non-write file descriptor is honored:
+(If the times are similar, fsync() can sync data written on a different
+descriptor.)
+        write, fsync, close                4446.461 ops/sec     225 usecs/op
+        write, close, fsync                4894.154 ops/sec     204 usecs/op
+
+Non-sync'ed 8kB writes:
+        write                            670247.418 ops/sec       1 usecs/op
+
+--> Applying Fair-Tuning Profile to PostgreSQL Origin (sql/03-fair-tuning.sql)...
+psql:/tmp/03-fair-tuning.sql:22: NOTICE:  extension "pg_trgm" already exists, skipping
+psql:/tmp/03-fair-tuning.sql:23: NOTICE:  extension "pg_prewarm" already exists, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_product_id_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_product_id_name_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_order_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_prod_order_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_order_prod_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_id_desc" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_prod_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_orders_tenant_cust_status_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_orders_tenant_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_customer_tenant_id_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_customer_tenant_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_review_prod_cust_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:46: NOTICE:  index "idx_oitem_tenant_cov" does not exist, skipping
+psql:/tmp/03-fair-tuning.sql:49: NOTICE:  relation "idx_customer_name_trgm" already exists, skipping
+psql:/tmp/03-fair-tuning.sql:50: NOTICE:  relation "idx_customer_email_trgm" already exists, skipping
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+psql:/tmp/03-fair-tuning.sql:51: NOTICE:  relation "idx_product_name_trgm" already exists, skipping
+psql:/tmp/03-fair-tuning.sql:52: NOTICE:  relation "idx_review_body_trgm" already exists, skipping
+ prewarmed_relations 
+---------------------
+                  30
+(1 row)
+
+========================================================================
+ Phase 1 & 2: Materialized View Cold Creation & Settled Scans (ADMISSION_THRESHOLD=1)
+========================================================================
+mv_tier_t1  A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+  [trial 1/3] mv_cold0s    | A:  272.51 ms (  29 rps) | B:  805.40 ms (  10 rps) | hit:   4.51% (w0) | gain: -65.5%
+  [trial 2/3] mv_cold0s    | A:  273.35 ms (  29 rps) | B:  805.17 ms (  10 rps) | hit:   3.72% (w0) | gain: -65.5%
+  [trial 3/3] mv_cold0s    | A:  236.38 ms (  34 rps) | B:  814.80 ms (  10 rps) | hit:   4.33% (w0) | gain: -70.6%
+mv_cold0s      |    260.75 ms | 31 (-2/+3, sd=2.4)        |    808.46 ms | 10 (-0/+0, sd=0.0)        |   4.2% | -67% (-3%/2%)          | 0.0
+  [trial 1/3] mv_warm30s   | A:  264.88 ms (  30 rps) | B: 1771.95 ms (   5 rps) | hit:  22.46% (w30) | gain: -83.3%
+  [trial 2/3] mv_warm30s   | A:  266.83 ms (  30 rps) | B: 1293.04 ms (   6 rps) | hit:  19.95% (w30) | gain: -80.0%
+  [trial 3/3] mv_warm30s   | A:  273.22 ms (  29 rps) | B: 1006.31 ms (   8 rps) | hit:  27.56% (w30) | gain: -72.4%
+mv_warm30s     |    268.31 ms | 30 (-1/+0, sd=0.5)        |   1357.10 ms | 6 (-1/+2, sd=1.2)         |  23.3% | -79% (-5%/6%)          | 30.0
+  [Trial 1/3] mv_joins  | A: 209.188 ms (38 rps) | B: 7.738 ms (1034 rps) | hit: 100.00% | gain: +2621.1% | warm: 5
+  [Trial 2/3] mv_joins  | A: 187.521 ms (43 rps) | B: 8.898 ms (899 rps) | hit: 100.00% | gain: +1990.7% | warm: 6
+  [Trial 3/3] mv_joins  | A: 182.625 ms (44 rps) | B: 8.199 ms (976 rps) | hit: 98.94% | gain: +2118.2% | warm: 6
+mv_joins    193.111     42      8.278    970    99.6%   +2243%   5.7  | A_rps_dev: -4/+2 (sd 3.2) | B_rps_dev: -71/+64 (sd 67.7) | gain_dev: -253%/+378%
+  [Trial 1/3] mv_analytics | A: 122.429 ms (65 rps) | B: 10.106 ms (792 rps) | hit: 100.00% | gain: +1118.5% | warm: 5
+  [Trial 2/3] mv_analytics | A: 150.980 ms (53 rps) | B: 13.033 ms (614 rps) | hit: 100.00% | gain: +1058.5% | warm: 5
+  [Trial 3/3] mv_analytics | A: 169.152 ms (47 rps) | B: 12.057 ms (663 rps) | hit: 100.00% | gain: +1310.6% | warm: 5
+mv_analytics   147.520     55     11.732    690   100.0%   +1163%   5.0  | A_rps_dev: -8/+10 (sd 9.2) | B_rps_dev: -76/+102 (sd 91.9) | gain_dev: -104%/+148%
+  [Trial 1/3] mv_dash   | A: 291.928 ms (27 rps) | B: 44.623 ms (179 rps) | hit: 100.00% | gain: +563.0% | warm: 7
+  [Trial 2/3] mv_dash   | A: 282.710 ms (28 rps) | B: 913.122 ms (9 rps) | hit: 58.59% | gain: -67.9% | warm: 4
+  [Trial 3/3] mv_dash   | A: 284.571 ms (28 rps) | B: 30.665 ms (261 rps) | hit: 100.00% | gain: +832.1% | warm: 7
+mv_dash     286.403     28    329.470    150    86.2%    +442%   6.0  | A_rps_dev: -1/+0 (sd 0.6) | B_rps_dev: -141/+111 (sd 128.5) | gain_dev: -510%/+390%
+  [Trial 1/3] mv_zipf1000 | A: 273.844 ms (29 rps) | B: 407.018 ms (20 rps) | hit: 73.20% | gain: -31.0% | warm: 4
+  [Trial 2/3] mv_zipf1000 | A: 260.975 ms (31 rps) | B: 447.306 ms (18 rps) | hit: 68.70% | gain: -41.9% | warm: 4
+  [Trial 3/3] mv_zipf1000 | A: 222.915 ms (36 rps) | B: 305.041 ms (26 rps) | hit: 72.61% | gain: -27.8% | warm: 4
+mv_zipf1000   252.578     32    386.455     21    71.5%     -34%   4.0  | A_rps_dev: -3/+4 (sd 3.6) | B_rps_dev: -3/+5 (sd 4.2) | gain_dev: -8%/+6%
+
+========================================================================
+ Phase 3: Dynamic Filter Materialized Views (ADMISSION_THRESHOLD=2)
+========================================================================
+mv_tier_t2  A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+  [Trial 1/3] mv_dyn_t2 | A: 227.050 ms (35 rps) | B: 233.415 ms (34 rps) | hit: 40.56% | gain: -2.9% | warm: 4
+  [Trial 2/3] mv_dyn_t2 | A: 234.995 ms (34 rps) | B: 333.534 ms (24 rps) | hit: 39.03% | gain: -29.4% | warm: 4
+  [Trial 3/3] mv_dyn_t2 | A: 305.796 ms (26 rps) | B: 358.158 ms (22 rps) | hit: 39.30% | gain: -15.4% | warm: 4
+mv_dyn_t2   255.947     32    308.369     27    39.6%     -16%   4.0  | A_rps_dev: -6/+3 (sd 4.9) | B_rps_dev: -5/+7 (sd 6.4) | gain_dev: -14%/+13%

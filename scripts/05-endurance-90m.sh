@@ -173,10 +173,10 @@ warm_with_telemetry() {
   echo "------------------------------------------------------------------------"
 
   for p in $(seq 1 "$max_passes"); do
-    read -r h0 m0 f0 <<<"$(scrape)"
+    read -r h0 m0 f0 u0 e0 <<<"$(scrape)"
     run_streamed "$phase_id" 1 "$write_pct" "$label (Pass $p/$max_passes)" '$PGCACHE_HOST' '$PGCACHE_PORT' "$warm_secs" "$@"
-    read -r h1 m1 f1 <<<"$(scrape)"
-    cur=$(awk -v h=$((h1-h0)) -v m=$((m1-m0)) -v f=$((f1-f0)) 'BEGIN{eh=h-f; if(eh<0)eh=0; printf "%.4f", (h+m)?eh/(h+m):0}')
+    read -r h1 m1 f1 u1 e1 <<<"$(scrape)"
+    cur=$(awk -v h=$((h1-h0)) -v m=$((m1-m0)) -v f=$((f1-f0)) -v u=$((u1-u0)) 'BEGIN{eh=h-f; if(eh<0)eh=0; tot=h+m+u; printf "%.4f", tot?eh/tot:0}')
     echo "--> Warm-up Pass $p effective hit ratio: $(awk -v c="$cur" 'BEGIN{printf "%.2f%%", c*100}')"
     if awk -v c="$cur" -v q="$prev" 'BEGIN{exit !(q >= 0 && c > 0.05 && c-q < 0.01 && c-q > -0.01)}'; then
       echo "--> Cache settled after $p passes!"
@@ -206,14 +206,14 @@ warm_with_telemetry 2 0 "Phase 2/6: PgCache Warm-up -- 100% Read" \
 READ_WARM_PASSES="$WARM_PASSES_TAKEN"
 
 # Phase 3: 30m Pure Read on PgCache (Path B)
-read -r rh0 rm0 rf0 <<<"$(scrape)"
+read -r rh0 rm0 rf0 ru0 re0 <<<"$(scrape)"
 run_streamed 3 1 0 "Phase 3/6: PgCache Proxy -- 100% Read" \
   '$PGCACHE_HOST' '$PGCACHE_PORT' "$READ_DURATION" \
   -f "/tmp/mt/$WORKLOAD" -D tenants="$ACTIVE_TENANTS"
-read -r rh1 rm1 rf1 <<<"$(scrape)"
+read -r rh1 rm1 rf1 ru1 re1 <<<"$(scrape)"
 READ_B_LAT="$LAST_LAT_MS"
 READ_B_TPS="$LAST_TPS"
-READ_HIT_PCT=$(awk -v h=$((rh1-rh0)) -v m=$((rm1-rm0)) 'BEGIN{printf "%.1f", (h+m)?100*h/(h+m):0}')
+READ_HIT_PCT=$(awk -v h=$((rh1-rh0)) -v m=$((rm1-rm0)) -v u=$((ru1-ru0)) 'BEGIN{tot=h+m+u; printf "%.1f", tot?100*h/tot:0}')
 READ_GAIN_PCT=$(awk -v x="${READ_A_TPS:-0}" -v y="${READ_B_TPS:-0}" 'BEGIN{printf "%+.0f", (x+0>0)?100*((y+0)/(x+0)-1):0}')
 
 # ============================================================================
@@ -235,15 +235,15 @@ MAX_WARM_PASSES=4 warm_with_telemetry 5 "$WRITE_PCT" "Phase 5/6: PgCache Warm-up
 RW_WARM_PASSES="$WARM_PASSES_TAKEN"
 
 # Phase 6: 15m Mixed Read/Write on PgCache (Path B)
-read -r wh0 wm0 wf0 <<<"$(scrape)"
+read -r wh0 wm0 wf0 wu0 we0 <<<"$(scrape)"
 run_streamed 6 1 "$WRITE_PCT" "Phase 6/6: PgCache Proxy -- ${READ_PCT}% Read / ${WRITE_PCT}% Write" \
   '$PGCACHE_HOST' '$PGCACHE_PORT' "$WRITE_DURATION" \
   -f "/tmp/mt/$WORKLOAD@$READ_PCT" -f "/tmp/mt/write.sql@$WRITE_PCT" \
   -D tenants="$ACTIVE_TENANTS" -D wtenants="$ACTIVE_TENANTS"
-read -r wh1 wm1 wf1 <<<"$(scrape)"
+read -r wh1 wm1 wf1 wu1 we1 <<<"$(scrape)"
 RW_B_LAT="$LAST_LAT_MS"
 RW_B_TPS="$LAST_TPS"
-RW_HIT_PCT=$(awk -v h=$((wh1-wh0)) -v m=$((wm1-wm0)) 'BEGIN{printf "%.1f", (h+m)?100*h/(h+m):0}')
+RW_HIT_PCT=$(awk -v h=$((wh1-wh0)) -v m=$((wm1-wm0)) -v u=$((wu1-wu0)) 'BEGIN{tot=h+m+u; printf "%.1f", tot?100*h/tot:0}')
 RW_GAIN_PCT=$(awk -v x="${RW_A_TPS:-0}" -v y="${RW_B_TPS:-0}" 'BEGIN{printf "%+.0f", (x+0>0)?100*((y+0)/(x+0)-1):0}')
 
 # Reset live exporter to idle (phase 0)

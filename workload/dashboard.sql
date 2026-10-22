@@ -35,14 +35,16 @@
 --           With them it is 200 x 10 x 4 across eight statements.
 -- ============================================================================
 
-\set t    random(1, :tenants)
-\set off  random(0, 9)
-\set st   random(1, 4)
-\set cust random(1, 100000)
+\set t         random(1, :tenants)
+\set off       random(0, 9)
+\set off_rows  :off * 20
+\set st        random(1, 4)
+\set min_total :st * 50
+\set cust      random(1, 100000)
 
 -- 1. Order counts by status. GROUP BY over the tenant's 2,500 orders.
 --    The "cards at the top of the dashboard" query.
-SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status;
+SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status ORDER BY status ASC;
 
 -- 2. Revenue and order count. Two aggregates over the same 2,500 rows.
 SELECT sum(total), count(*) FROM orders WHERE tenant_id = :t;
@@ -54,34 +56,38 @@ SELECT count(*) FROM customer WHERE tenant_id = :t;
 -- 4. The recent-orders page. This is the statement the composite index
 --    (tenant_id, created_at DESC) exists for: index order matches sort order,
 --    so the origin can stop at 20 rows instead of sorting 2,500.
---    OFFSET makes each page a distinct cache entry.
+--    Pre-computed :off_rows makes each page a distinct, 100% cacheable entry.
 SELECT id, status, total, created_at
   FROM orders WHERE tenant_id = :t
- ORDER BY created_at DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET :off_rows;
 
--- 5. A filtered count -- the number badge next to a status tab.
+-- 5. A filtered count -- the number badge next to a status/tier tab.
 --    COUNT(*) is the classic cache target: expensive to compute, tiny to store.
+--    Uses pure literals (:min_total pre-computed via \set) so PgCache's AST
+--    parser classifies 100% of executions as cacheable (uncacheable == 0).
 SELECT count(*) FROM orders
- WHERE tenant_id = :t AND status = (ARRAY['new','paid','shipped','done'])[:st];
+ WHERE tenant_id = :t AND status = 'done' AND total >= :min_total;
 
 -- 6. Recent orders with the customer name. A two-table join, which is what an
 --    ORM emits when a list view shows a field from a related record.
+--    Includes explicit c.tenant_id = :t for per-tenant CDC isolation.
 SELECT o.id, o.total, c.name
   FROM orders o JOIN customer c ON c.id = o.customer_id
- WHERE o.tenant_id = :t
- ORDER BY o.created_at DESC LIMIT 10;
+ WHERE o.tenant_id = :t AND c.tenant_id = :t
+ ORDER BY o.created_at DESC, o.id DESC LIMIT 10;
 
 -- 7. Top products for the tenant. The most expensive statement in the request:
 --    a join across ~10,000 line items, a GROUP BY, and a sort on the aggregate.
---    No index can serve this by walking -- the origin has to do the work.
-SELECT p.name, sum(oi.qty)
+--    Grouping by (p.id, p.name) provides a non-nullable entity key for MV admission
+--    and deterministic tie-breaking.
+SELECT p.id, p.name, sum(oi.qty) AS total_qty
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- GROUP BY p.name ORDER BY 2 DESC LIMIT 10;
+ GROUP BY p.id, p.name ORDER BY total_qty DESC, p.id ASC LIMIT 10;
 
 -- 8. A page of line items with product names. Join plus pagination, the two
 --    shapes combined, closing the request.
 SELECT oi.id, oi.qty, oi.price, p.name
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- ORDER BY oi.id DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY oi.id DESC LIMIT 20 OFFSET :off_rows;

@@ -24,7 +24,8 @@ This directory contains all `pgbench` SQL workload scripts used to benchmark **P
    - [5.2 `complex-joins.sql` — Deep 4-to-6 Table `JOIN` & `LEFT JOIN` Chains (4 Statements)](#52-complex-joinssql--deep-4-to-6-table-join--left-join-chains-4-statements)
    - [5.3 `complex-analytics.sql` — Multi-Dimensional Analytical Rollups (4 Statements)](#53-complex-analyticssql--multi-dimensional-analytical-rollups-4-statements)
    - [5.4 `complex-dashboard.sql` — Unified Enterprise Analytics & Search Screen (8 Statements)](#54-complex-dashboardsql--unified-enterprise-analytics--search-screen-8-statements)
-6. [Performance Summary Across Workloads (Docker vs. 3-Node DOKS)](#6-performance-summary-across-workloads-docker-vs-3-node-doks)
+   - [5.5 `complex-dashboard-zipfian.sql` — Pareto 80/20 Enterprise Traffic (8 Statements)](#55-complex-dashboard-zipfiansql--pareto-8020-enterprise-traffic-8-statements)
+6. [Performance Summary Across Workloads (3-Node Cloud Cluster)](#6-performance-summary-across-workloads-3-node-cloud-cluster)
 
 ---
 
@@ -32,12 +33,15 @@ This directory contains all `pgbench` SQL workload scripts used to benchmark **P
 
 | Script | Statements | Tables Touched | Primary Relational Patterns | Benchmark Sweep |
 |---|---:|---|---|---|
-| [`dashboard.sql`](dashboard.sql) | 8 | `orders`, `customer`, `order_item`, `product` | Point counts, single-table `GROUP BY`, keyset/offset pagination, 2-table `INNER JOIN` | `01-tenant-sweep.sh`, `02-client-sweep.sh`, `03-write-pressure.sh` |
-| [`write.sql`](write.sql) | 1 | `orders` | Tenant-scoped `UPDATE orders SET total = total + 1 WHERE id IN (SELECT ...)` | `03-write-pressure.sh`, `04-complex-sweep.sh writes` |
+| [`dashboard.sql`](dashboard.sql) | 8 | `orders`, `customer`, `order_item`, `product` | Point counts, single-table `GROUP BY`, keyset/offset pagination, 2-table `INNER JOIN` (100% cacheable) | `01-tenant-sweep.sh`, `02-concurrency-sweep.sh`, `03-write-sweep.sh` |
+| [`write.sql`](write.sql) | 2 | `orders`, `order_item` | Tenant-scoped `UPDATE orders` + `INSERT INTO order_item` | `03-write-sweep.sh`, `04-complex-sweep.sh writes` |
 | [`complex-search.sql`](complex-search.sql) | 4 | All 7 tables | Leading-wildcard `ILIKE '%...%'` substring search + 3-to-6 table `JOIN` & `LEFT JOIN` | `04-complex-sweep.sh scenarios` |
 | [`complex-joins.sql`](complex-joins.sql) | 4 | All 7 tables | Deep 4-to-6 table `INNER JOIN` & multi-hop `LEFT JOIN` (preserving zero-order customers and unreviewed products) | `04-complex-sweep.sh scenarios` |
 | [`complex-analytics.sql`](complex-analytics.sql) | 4 | All 7 tables | Multi-dimensional `GROUP BY`, `FILTER (WHERE ...)`, `CASE WHEN` ticket buckets, `HAVING` thresholds | `04-complex-sweep.sh scenarios` |
-| [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | All 7 tables | Unified enterprise screen combining 3 analytical rollups, 3 deep `JOIN`/`LEFT JOIN` views, and 2 `ILIKE` searches | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
+| [`complex-dashboard.sql`](complex-dashboard.sql) | 8 | All 7 tables | Unified enterprise screen combining 3 analytical rollups, 3 deep `JOIN`/`LEFT JOIN` views, and 2 `ILIKE` searches (Uniform tenant selection) | `04-complex-sweep.sh` (`scenarios`, `tenants`, `clients`, `writes`) |
+| [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) | 8 | All 7 tables | Same 8-statement enterprise screen using realistic **Pareto 80/20 (`random_zipfian(1, :tenants, 1.07)`)** tenant selection | `04-complex-sweep.sh` (`scenarios`, `zipfian`) |
+| [`complex-search-fair.sql`](complex-search-fair.sql) | 4 | All 7 tables | 3+ character `ILIKE '%...%'` substring search (`cust10..19`, `product 10..19`, `seller10..19`, `number 10..19`) enabling PostgreSQL `GIN pg_trgm` trigram indexes | `06-fair-benchmark.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README.md)) |
+| [`complex-dashboard-dynamic.sql`](complex-dashboard-dynamic.sql) | 8 | All 7 tables | Enterprise screen with 4 dynamic intra-tenant filters (4 status values × 3 price tiers × 10 categories × 5 rating thresholds + 10 3-char search needles = 4,000 shapes) | `06-fair-benchmark.sh`, `07-admission-threshold-sweep.sh` ([`results/0.7.1_v2/`](../results/0.7.1_v2/README.md)) |
 
 ---
 
@@ -118,7 +122,7 @@ erDiagram
 
 ### 2.2 Tables, Cardinalities & Scale Factors
 
-Database seeding is parameterized by `:scale` (default `1`) and `:tenants` (default `200`, scaled up to `1,000` in Docker and `2,000` on DOKS):
+Database seeding is parameterized by `:scale` (default `1`) and `:tenants` (default `200`, scaled up to `2,000` active tenants):
 
 | Table | Tenant Scoping | Row Count (`SCALE=1`) | Row Count (`SCALE=5`) | Row Count (`SCALE=10`) | Rows per Tenant (`SCALE=1, TENANTS=200`) | Rows per Tenant (`SCALE=1, TENANTS=2000`) |
 |---|---|---:|---:|---:|---:|---:|
@@ -269,17 +273,18 @@ Simulates loading the main operational dashboard of a tenant organization. One `
 
 #### Variables
 ```sql
-\set t    random(1, :tenants)
-\set off  random(0, 9)
-\set st   random(1, 4)
-\set cust random(1, 100000)
+\set t         random(1, :tenants)
+\set off       random(0, 9)
+\set off_rows  :off * 20
+\set st        random(1, 4)
+\set min_total :st * 50
 ```
 
 #### Statements
 
 ```sql
 -- Statement 1: Order counts by status (KPI summary cards at top of dashboard)
-SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status;
+SELECT status, count(*) FROM orders WHERE tenant_id = :t GROUP BY status ORDER BY status;
 
 -- Statement 2: Total revenue and total order count for the tenant
 SELECT sum(total), count(*) FROM orders WHERE tenant_id = :t;
@@ -287,49 +292,62 @@ SELECT sum(total), count(*) FROM orders WHERE tenant_id = :t;
 -- Statement 3: Total customer count belonging to the tenant
 SELECT count(*) FROM customer WHERE tenant_id = :t;
 
--- Statement 4: Paginated recent orders list (uses composite index orders_tenant_created)
+-- Statement 4: Paginated recent orders list (pre-computed :off_rows for 100% cacheability)
 SELECT id, status, total, created_at
   FROM orders WHERE tenant_id = :t
- ORDER BY created_at DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET :off_rows;
 
--- Statement 5: Filtered order count badge for a specific status tab
+-- Statement 5: Filtered order count badge for a specific minimum order value tier
 SELECT count(*) FROM orders
- WHERE tenant_id = :t AND status = (ARRAY['new','paid','shipped','done'])[:st];
+ WHERE tenant_id = :t AND total >= :min_total;
 
 -- Statement 6: Recent 10 orders enriched with customer name (2-table INNER JOIN)
 SELECT o.id, o.total, c.name
   FROM orders o JOIN customer c ON c.id = o.customer_id
- WHERE o.tenant_id = :t
- ORDER BY o.created_at DESC LIMIT 10;
+ WHERE o.tenant_id = :t AND c.tenant_id = :t
+ ORDER BY o.created_at DESC, o.id DESC LIMIT 10;
 
 -- Statement 7: Top 10 best-selling products by quantity for the tenant (2-table JOIN + GROUP BY + ORDER BY)
 SELECT p.name, sum(oi.qty)
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- GROUP BY p.name ORDER BY 2 DESC LIMIT 10;
+ GROUP BY p.id, p.name ORDER BY 2 DESC, p.id ASC LIMIT 10;
 
 -- Statement 8: Paginated order line items with product name (2-table JOIN + pagination)
 SELECT oi.id, oi.qty, oi.price, p.name
   FROM order_item oi JOIN product p ON p.id = oi.product_id
  WHERE oi.tenant_id = :t
- ORDER BY oi.id DESC LIMIT 20 OFFSET :off * 20;
+ ORDER BY oi.id DESC LIMIT 20 OFFSET :off_rows;
 ```
 
 ---
 
-### 4.2 [`write.sql`](write.sql) — Tenant-Scoped Write Workload (1 Statement)
+### 4.2 [`write.sql`](write.sql) — Tenant-Scoped Write Workload (`UPDATE` + `INSERT`, 2 Statements)
 
-Used in mixed read/write sweeps (`pgbench -f dashboard.sql@95 -f write.sql@5` or `-f complex-dashboard.sql@95 -f write.sql@5`) to generate realistic tenant-scoped updates that trigger logical replication (CDC) invalidations in PgCache:
+Used in mixed read/write sweeps (`pgbench -f dashboard.sql@95 -f write.sql@5` or `-f complex-dashboard.sql@95 -f write.sql@5`) to generate realistic tenant-scoped writes (both updating an existing order and inserting a new order line item) that trigger logical replication (CDC) invalidations in PgCache:
 
-#### Variables & Statement
+#### Variables & Statements
 ```sql
-\set t random(1, :wtenants)
-\set n random(0, 2000)
+\set t     random(1, :wtenants)
+\set n     random(0, 200)
+\set qty   random(1, 5)
+\set price random(10, 250)
+\set prod  random(1, 1000)
 
+-- 1. Update an existing order total for tenant :t
 UPDATE orders SET total = total + 1
  WHERE id IN (
    SELECT id FROM orders WHERE tenant_id = :t ORDER BY id OFFSET :n LIMIT 1
  );
+
+-- 2. Insert a new order_item row for tenant :t (uses order_item_id_seq >= 100,000,000)
+INSERT INTO order_item (order_id, product_id, qty, price, tenant_id)
+SELECT o.id, :prod, :qty, :price, :t
+  FROM orders o
+ WHERE o.tenant_id = :t
+ ORDER BY o.id
+OFFSET :n
+ LIMIT 1;
 ```
 
 - **Why `:wtenants` is separate from `:tenants`**: Allows testing write concentration (e.g. `wtenants=1` or `wtenants=10`, where a handful of noisy tenants generate all writes while 200–1,000 tenants read) versus uniform write dispersion (`wtenants=tenants`).
@@ -617,16 +635,29 @@ Models a full enterprise SaaS analytics & search screen by combining **8 complex
 
 ---
 
-## 6. Performance Summary Across Workloads (Docker vs. 3-Node DOKS)
+### 5.5 [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) — Pareto 80/20 Enterprise Traffic (8 Statements)
 
-Measured on **PgCache `0.7.1`** (`TENANTS=200`, `CLIENTS=8`, `warm_until_settled` protocol, `100.0%` hit ratio):
+Identical to `complex-dashboard.sql` in its 8 SQL queries, except tenant selection follows a **Zipfian / Pareto distribution (`s = 1.07`)** instead of a flat uniform distribution:
 
-| Workload Script | Statements | Local Docker Origin | Local Docker PgCache 0.7.1 | Docker Speedup | 3-Node DOKS Origin | 3-Node DOKS PgCache 0.7.1 | DOKS Speedup |
-|---|---:|---|---|:---:|---|---|:---:|
-| [`dashboard.sql`](dashboard.sql) (`dash_base`) | 8 | 37.61 ms · 213 rps | **16.05 ms · 498 rps** | **2.3× (`+134%`)** | 23.06 ms · 347 rps | **15.92 ms · 503 rps** | **1.45× (`+45%`)** |
-| [`complex-search.sql`](complex-search.sql) (`search`) | 4 | 88.67 ms · 90 rps | **1.53 ms · 5,223 rps** | **58.0× (`+5,703%`)** | 74.26 ms · 108 rps | **5.04 ms · 1,586 rps** | **14.7× (`+1,369%`)** |
-| [`complex-joins.sql`](complex-joins.sql) (`joins`) | 4 | 121.46 ms · 66 rps | **1.25 ms · 6,426 rps** | **97.4× (`+9,636%`)** | 148.87 ms · 54 rps | **4.73 ms · 1,692 rps** | **31.3× (`+3,033%`)** |
-| [`complex-analytics.sql`](complex-analytics.sql) (`analytics`) | 4 | 92.31 ms · 87 rps | **1.39 ms · 5,737 rps** | **65.9× (`+6,494%`)** | 102.38 ms · 78 rps | **5.69 ms · 1,406 rps** | **18.0× (`+1,703%`)** |
-| [`complex-dashboard.sql`](complex-dashboard.sql) (`cplx_dash`) | 8 | 209.62 ms · 38 rps | **2.86 ms · 2,798 rps** | **73.6× (`+7,263%`)** | 204.39 ms · 39 rps | **11.50 ms · 696 rps** | **17.8× (`+1,685%`)** |
+```sql
+\set t random_zipfian(1, :tenants, 1.07)
+```
 
-For full benchmark reports and raw logs, see [`../results/0.7.1/README.md`](../results/0.7.1/README.md) and [`../README.md`](../README.md).
+In real multi-tenant SaaS systems, roughly 20% of tenants generate 80% of traffic. Using `complex-dashboard-zipfian.sql` tests how PgCache behaves at high tenant counts (up to **2,000 tenants**) when a realistic hot cohort drives the majority of requests.
+
+---
+
+## 6. Performance Summary Across Workloads (3-Node Cloud Cluster)
+
+Measured across **5 independent pod-recreated trials (`TRIALS=5`)** on a **3-node Kubernetes cloud cluster** (`PgCache 0.7.1`, `TENANTS=200`, `CLIENTS=8`):
+
+| Workload Script | Statements | PostgreSQL Direct (Path A) | PgCache 0.7.1 (Path B) | Cache Hit Rate | Average Speedup (5-Run Spread) |
+|---|---:|---|---|---:|---|
+| [`dashboard.sql`](dashboard.sql) (`dash_base`) | 8 | 57.8 ms · **146 req/s** *(±40.5 sd)* | **29.4 ms · 273 req/s** *(±16.3 sd)* | **100.0%** | **1.98× (`+98%`)** |
+| [`complex-search.sql`](complex-search.sql) (`search`) | 4 | 129.6 ms · **63 req/s** *(±9.2 sd)* | **6.9 ms · 1,170 req/s** *(±126.1 sd)* | **100.0%** | **18.8× (`+1,778%`)** |
+| [`complex-joins.sql`](complex-joins.sql) (`joins`) | 4 | 238.9 ms · **34 req/s** *(±2.8 sd)* | **8.2 ms · 991 req/s** *(±160.6 sd)* | **100.0%** | **29.4× (`+2,839%`)** |
+| [`complex-analytics.sql`](complex-analytics.sql) (`analytics`) | 4 | 175.3 ms · **46 req/s** *(±4.1 sd)* | **9.0 ms · 905 req/s** *(±122.1 sd)* | **100.0%** | **19.8× (`+1,883%`)** |
+| [`complex-dashboard.sql`](complex-dashboard.sql) (`cplx_dash`) | 8 | 307.5 ms · **26 req/s** *(±1.2 sd)* | **23.4 ms · 389 req/s** *(±132.6 sd)* | **100.0%** | **15.0× (`+1,400%`)** |
+| [`complex-dashboard-zipfian.sql`](complex-dashboard-zipfian.sql) (`z_tenants=200`) | 8 | 339.2 ms · **24 req/s** *(±4.1 sd)* | **76.0 ms · 267 req/s** *(±191.3 sd)* | **97.5%** | **11.5× (`+1,051%`)** |
+
+For the complete 5-run breakdown and raw logs, see [`../results/0.7.1/README.md`](../results/0.7.1/README.md) and [`../README.md`](../README.md).

@@ -58,12 +58,21 @@ Always enforce these six rules when authoring `workload/*.sql` files:
    - Every `LIMIT` query MUST end its `ORDER BY` clause with unique tie-breaker columns (e.g., `ORDER BY gross_revenue DESC, p.id ASC` or `ORDER BY o.created_at DESC, oi.id DESC`) so Origin and PgCache always return identical row orderings.
    - Including `GROUP BY` on the entity key (e.g., `GROUP BY o.id, ..., oi.id` with `coalesce(max(r.rating), 0)` for `LEFT JOIN review`) instructs PgCache to populate the complete tenant relation set before grouping and paginating, guaranteeing 100% byte-for-byte differential identity.
 
-## 3. Running the Verification Gate
+## 3. Running the Verification Gate (Static & Post-CDC Live Mutation)
 
 Whenever adding or modifying a workload query, execute:
 
 ```bash
+# In 3-Node Kubernetes (Official Benchmark Environment):
+./scripts/verify-correctness.sh
+
+# Or locally in Docker (Setup & Functional Validation Only):
 DOCKER=1 ./scripts/verify-correctness.sh
 ```
 
-This tests all 12 complex queries across 3 passes (`Pass 1` miss/populate, `Pass 2` base-table hit + MV build, `Pass 3` warm MV hit). Do not proceed to benchmark sweeps unless `Uncacheable delta: 0`, `MV Gate Admitted: 12 (Rejected: 0)`, `MV Hits delta: 12`, `Cache Errors delta: 0`, and all 12 differential row comparisons report `[PASS]`.
+This tests:
+1. All **8 baseline queries** (`workload/dashboard.sql`) across 2 passes (`Pass 1` miss, `Pass 2` hit).
+2. All **12 complex queries** (`workload/complex-*.sql`) across 3 static passes (`Pass 1` miss/populate, `Pass 2` base-table hit + MV build, `Pass 3` warm MV hit).
+3. **Pass 4 (Post-CDC Live Mutation Check)**: Mutates live rows in `orders` and `order_item` on `$ORIGIN_HOST` for `tenant_id = 13`, waits for logical replication CDC propagation (`pgcache_cdc_events_processed`), and verifies that all 12 complex queries return byte-for-byte identical rows (`Origin == PgCache`) without stale data before restoring the database state.
+
+Do not proceed to benchmark sweeps unless `Uncacheable delta: 0`, `MV Gate Admitted: 12 (Rejected: 0)`, `MV Hits delta: 12`, `Cache Errors delta: 0`, and all baseline, static complex, and post-CDC row comparisons report `[PASS]`.
