@@ -17,6 +17,9 @@
 ALTER TABLE orders     ADD COLUMN IF NOT EXISTS tenant_id int;
 ALTER TABLE order_item ADD COLUMN IF NOT EXISTS tenant_id int;
 
+SET synchronous_commit = off;
+SET maintenance_work_mem = '512MB';
+
 UPDATE orders
    SET tenant_id = 1 + (customer_id % :tenants)
  WHERE tenant_id IS NULL;

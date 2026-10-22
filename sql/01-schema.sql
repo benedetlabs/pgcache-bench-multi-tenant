@@ -26,29 +26,32 @@
 
 DROP TABLE IF EXISTS review, order_item, orders, product, customer, seller, category CASCADE;
 
+SET synchronous_commit = off;
+SET maintenance_work_mem = '512MB';
+
 CREATE TABLE category (
-  id   int PRIMARY KEY,
+  id   int NOT NULL,
   name text NOT NULL
 );
 
 CREATE TABLE seller (
-  id     int PRIMARY KEY,
+  id     int NOT NULL,
   name   text NOT NULL,
   rating numeric(3,2)
 );
 
 -- tenant_id lives here natively: a customer belongs to exactly one tenant.
 CREATE TABLE customer (
-  id        int PRIMARY KEY,
+  id        int NOT NULL,
   name      text NOT NULL,
   email     text NOT NULL,
   tenant_id int  NOT NULL
 );
 
 CREATE TABLE product (
-  id          int PRIMARY KEY,
-  category_id int NOT NULL REFERENCES category(id),
-  seller_id   int NOT NULL REFERENCES seller(id),
+  id          int NOT NULL,
+  category_id int NOT NULL,
+  seller_id   int NOT NULL,
   name        text NOT NULL,
   price       numeric(10,2) NOT NULL,
   stock       int NOT NULL,
@@ -57,8 +60,8 @@ CREATE TABLE product (
 
 -- "orders", not "order": ORDER is a reserved word
 CREATE TABLE orders (
-  id          int PRIMARY KEY,
-  customer_id int NOT NULL REFERENCES customer(id),
+  id          int NOT NULL,
+  customer_id int NOT NULL,
   status      text NOT NULL,
   total       numeric(10,2) NOT NULL,
   created_at  timestamptz NOT NULL,
@@ -66,24 +69,24 @@ CREATE TABLE orders (
 );
 
 CREATE TABLE order_item (
-  id         int PRIMARY KEY,
-  order_id   int NOT NULL REFERENCES orders(id),
-  product_id int NOT NULL REFERENCES product(id),
+  id         int NOT NULL,
+  order_id   int NOT NULL,
+  product_id int NOT NULL,
   qty        int NOT NULL,
   price      numeric(10,2) NOT NULL,
   tenant_id  int NOT NULL
 );
 
 CREATE TABLE review (
-  id          int PRIMARY KEY,
-  product_id  int NOT NULL REFERENCES product(id),
-  customer_id int NOT NULL REFERENCES customer(id),
+  id          int NOT NULL,
+  product_id  int NOT NULL,
+  customer_id int NOT NULL,
   rating      int NOT NULL,
   body        text NOT NULL,
   created_at  timestamptz NOT NULL
 );
 
--- ── Seed ────────────────────────────────────────────────────────────────────
+-- ── Seed (Bulk Insert Before PK/FK/Indexes for 10x Faster Loading) ──────────
 
 INSERT INTO category SELECT g, 'cat' || g FROM generate_series(1, 50) g;
 
@@ -118,7 +121,23 @@ INSERT INTO review   SELECT g, 1 + (g % LEAST(200000 * :scale, 1000000)), 1 + (g
                             now() - (g % 365 || ' days')::interval
                      FROM generate_series(1, LEAST(300000 * :scale, 1500000)) g;
 
--- ── Indexes ─────────────────────────────────────────────────────────────────
+-- ── Primary Keys, Foreign Keys & Indexes ────────────────────────────────────
+
+ALTER TABLE category   ADD PRIMARY KEY (id);
+ALTER TABLE seller     ADD PRIMARY KEY (id);
+ALTER TABLE customer   ADD PRIMARY KEY (id);
+ALTER TABLE product    ADD PRIMARY KEY (id);
+ALTER TABLE orders     ADD PRIMARY KEY (id);
+ALTER TABLE order_item ADD PRIMARY KEY (id);
+ALTER TABLE review     ADD PRIMARY KEY (id);
+
+ALTER TABLE product    ADD FOREIGN KEY (category_id) REFERENCES category(id) NOT VALID;
+ALTER TABLE product    ADD FOREIGN KEY (seller_id)   REFERENCES seller(id)   NOT VALID;
+ALTER TABLE orders     ADD FOREIGN KEY (customer_id) REFERENCES customer(id) NOT VALID;
+ALTER TABLE order_item ADD FOREIGN KEY (order_id)    REFERENCES orders(id)   NOT VALID;
+ALTER TABLE order_item ADD FOREIGN KEY (product_id)  REFERENCES product(id)  NOT VALID;
+ALTER TABLE review     ADD FOREIGN KEY (product_id)  REFERENCES product(id)  NOT VALID;
+ALTER TABLE review     ADD FOREIGN KEY (customer_id) REFERENCES customer(id) NOT VALID;
 
 CREATE INDEX ON product(category_id);
 CREATE INDEX ON product(seller_id);

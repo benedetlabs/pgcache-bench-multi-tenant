@@ -290,7 +290,7 @@ ensure_workload_scripts() {
       tries=$((tries + 1))
       sleep 2
     done
-    for f in dashboard write complex-search complex-search-fair complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian complex-dashboard-dynamic; do
+    for f in dashboard write complex-search complex-search-fair complex-joins complex-analytics complex-dashboard complex-dashboard-zipfian complex-dashboard-dynamic complex-mv-heavy; do
       if [ -f "$REPO_ROOT/workload/$f.sql" ]; then
         tries=0
         while [ $tries -lt 5 ]; do
