@@ -1,0 +1,71 @@
+tenants    A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+
+
+  [Trial 1/3] 1         | A: 30.306 ms (264 rps) | B: 8.955 ms (893 rps) | hit: 100.00% | gain: +238.3% | warm: 2
+
+
+  [Trial 2/3] 1         | A: 34.232 ms (234 rps) | B: 10.694 ms (748 rps) | hit: 100.00% | gain: +219.7% | warm: 2
+
+
+  [Trial 3/3] 1         | A: 31.019 ms (258 rps) | B: 7.948 ms (1007 rps) | hit: 100.00% | gain: +290.3% | warm: 2
+1            31.852    252      9.199    883   100.0%    +249%   2.0  | A_rps_dev: -18/+12 (sd 15.9) | B_rps_dev: -135/+124 (sd 129.8) | gain_dev: -30%/+41%
+
+
+  [Trial 1/3] 10        | A: 26.368 ms (303 rps) | B: 11.136 ms (718 rps) | hit: 100.00% | gain: +137.0% | warm: 2
+
+
+  [Trial 2/3] 10        | A: 27.580 ms (290 rps) | B: 17.184 ms (466 rps) | hit: 100.00% | gain: +60.7% | warm: 2
+
+
+  [Trial 3/3] 10        | A: 34.331 ms (233 rps) | B: 14.936 ms (536 rps) | hit: 100.00% | gain: +130.0% | warm: 2
+10           29.426    275     14.419    573   100.0%    +109%   2.0  | A_rps_dev: -42/+28 (sd 37.2) | B_rps_dev: -107/+145 (sd 130.1) | gain_dev: -49%/+28%
+
+
+  [Trial 1/3] 50        | A: 31.409 ms (255 rps) | B: 14.028 ms (570 rps) | hit: 100.00% | gain: +123.5% | warm: 3
+
+
+  [Trial 2/3] 50        | A: 33.430 ms (239 rps) | B: 15.690 ms (510 rps) | hit: 100.00% | gain: +113.4% | warm: 3
+
+
+  [Trial 3/3] 50        | A: 28.352 ms (282 rps) | B: 15.402 ms (519 rps) | hit: 100.00% | gain: +84.0% | warm: 3
+50           31.064    259     15.040    533   100.0%    +107%   3.0  | A_rps_dev: -20/+23 (sd 21.7) | B_rps_dev: -23/+37 (sd 32.4) | gain_dev: -23%/+17%
+
+
+  [Trial 1/3] 100       | A: 32.128 ms (249 rps) | B: 23.017 ms (348 rps) | hit: 100.00% | gain: +39.8% | warm: 3
+
+
+  [Trial 2/3] 100       | A: 33.138 ms (241 rps) | B: 22.664 ms (353 rps) | hit: 100.00% | gain: +46.5% | warm: 4
+
+
+  [Trial 3/3] 100       | A: 38.251 ms (209 rps) | B: 20.062 ms (399 rps) | hit: 100.00% | gain: +90.9% | warm: 3
+100          34.506    233     21.914    367   100.0%     +59%   3.3  | A_rps_dev: -24/+16 (sd 21.2) | B_rps_dev: -19/+32 (sd 28.1) | gain_dev: -19%/+32%
+
+
+  [Trial 1/3] 500       | A: 49.436 ms (162 rps) | B: 46.554 ms (172 rps) | hit: 99.96% | gain: +6.2% | warm: 7
+
+
+  [Trial 2/3] 500       | A: 31.671 ms (253 rps) | B: 60.598 ms (132 rps) | hit: 99.86% | gain: -47.8% | warm: 8
+
+
+  [Trial 3/3] 500       | A: 38.359 ms (209 rps) | B: 51.732 ms (155 rps) | hit: 99.84% | gain: -25.8% | warm: 8
+500          39.822    208     52.961    153    99.9%     -22%   7.7  | A_rps_dev: -46/+45 (sd 45.5) | B_rps_dev: -21/+19 (sd 20.1) | gain_dev: -25%/+29%
+
+
+  [Trial 1/3] 1000      | A: 40.264 ms (199 rps) | B: 124.827 ms (64 rps) | hit: 86.39% | gain: -67.8% | warm: 8
+
+
+  [Trial 2/3] 1000      | A: 34.079 ms (235 rps) | B: 145.265 ms (55 rps) | hit: 92.50% | gain: -76.6% | warm: 8
+
+
+  [Trial 3/3] 1000      | A: 44.382 ms (180 rps) | B: 177.150 ms (45 rps) | hit: 85.40% | gain: -75.0% | warm: 8
+1000         39.575    205    149.081     55    88.1%     -73%   8.0  | A_rps_dev: -25/+30 (sd 27.9) | B_rps_dev: -10/+9 (sd 9.5) | gain_dev: -3%/+5%
+
+
+  [Trial 1/3] 2000      | A: 37.607 ms (213 rps) | B: 148.256 ms (54 rps) | hit: 50.32% | gain: -74.6% | warm: 8
+
+
+  [Trial 2/3] 2000      | A: 37.936 ms (211 rps) | B: 225.213 ms (36 rps) | hit: 46.38% | gain: -82.9% | warm: 8
+
+
+  [Trial 3/3] 2000      | A: 39.730 ms (201 rps) | B: 215.302 ms (37 rps) | hit: 51.00% | gain: -81.6% | warm: 8
+2000         38.424    208    196.257     42    49.2%     -80%   8.0  | A_rps_dev: -7/+5 (sd 6.4) | B_rps_dev: -6/+12 (sd 10.1) | gain_dev: -3%/+5%

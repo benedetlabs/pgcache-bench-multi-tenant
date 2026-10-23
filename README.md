@@ -33,7 +33,8 @@ the rest is the reasoning, including the parts we got wrong.
 15. [Why the query shape decides everything](#15-why-the-query-shape-decides-everything)
    - [15.1 Sweep 4 — complex multi-tenant SaaS scenarios (PgCache 0.7.1)](#151-sweep-4--what-happens-when-queries-get-heavy-pgcache-071)
    - [15.2 Sweep 5 — 1h30m endurance & Origin resource offload (DOKS + Grafana Cloud)](#152-sweep-5--90-minute-endurance-test-on-a-10-gb-database-doks--grafana-cloud)
-   - [15.3 Sweeps 6 & 7 — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study (`0.7.1_v2`)](#153-sweeps-6--7--the-fair-benchmark-dynamic-filters--admission_threshold-study-071_v2)
+   - [15.3 Sweeps 6 to 9 — The "Fair Benchmark", Dynamic Filters, `ADMISSION_THRESHOLD` & SSD vs. Local NVMe Study (`0.7.1_v2`)](#153-sweeps-6-to-9--the-fair-benchmark-dynamic-filters-admission_threshold--ssd-vs-local-nvme-study-071_v2)
+   - [15.4 Sweep 10 — PgCache 0.8.0, Outer Join Subsumption, Selective Column-Level Invalidation & `pgcache_cache_subsumptions` Warm-Up Curve (`0.8.0` vs. `0.7.1`)](#154-sweep-10--pgcache-080-outer-join-subsumption-selective-column-level-invalidation--pgcache_cache_subsumptions-warm-up-curve-080-vs-071)
 16. [What this does not prove](#16-what-this-does-not-prove)
 17. [Appendix: every file](#17-appendix-every-file)
 
@@ -1147,6 +1148,25 @@ See **[`results/0.7.1_v2/README.md`](results/0.7.1_v2/README.md)** for the compl
 - Why `ADMISSION_THRESHOLD=4` completely eliminates the `-56%` dynamic-filter regression (`235.77 ms / 34 rps`) and cuts cold-start latency by **58% to 76%**.
 - How isolating `PgCache` on **Local NVMe SSD** (while keeping `Origin` fixed on Standard SSD) under 5 GB real disk pressure cuts settled latency by **`3.86×`** on `mv5g_heavy` (beating Origin by **`+25%`**), cuts partial-hit latency by up to **`14.17×`** on `mv5g_dash` (**`+66.7%` to `+100%` over Origin**), and cuts mean latency under CDC invalidation churn (`mv5g_cdc9010`) by **`9.66×` (`36,361.7 ms` $\rightarrow$ `3,763.4 ms`, and `60.38×` on Trial 1 peak stall)**!
 
+### 15.4 Sweep 10 — PgCache 0.8.0, Outer Join Subsumption, Selective Column-Level Invalidation & `pgcache_cache_subsumptions` Warm-Up Curve (`0.8.0` vs. `0.7.1`)
+
+**Driver: [`scripts/10-subsumption-curve.sh`](scripts/10-subsumption-curve.sh)** ·
+**Curve Log: [`results/0.8.0/10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt`](results/0.8.0/10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt)** ·
+**Full Report: [`results/0.8.0/README.md`](results/0.8.0/README.md)**
+
+With the release of **PgCache `0.8.0`** (`2026-04-22`), we re-ran the full official suite on 3-node DOKS (`TRIALS=3` with full PgCache pod recreation) and measured the step-by-step warm-up curve (`8 × 15s = 120s`) of `pgcache_cache_subsumptions` comparing `0.8.0` against `0.7.1`:
+
+1. **Selective Column-Level `UPDATE` Invalidation (`-75%` Redundant Invalidations)**:
+   - In the post-CDC differential correctness gate (`verify-correctness.sh`), live `UPDATE orders` + `INSERT INTO order_item` mutations cut `pgcache_cache_invalidations` from **`12` down to `3` (-75%)**.
+   - On the continuous write-churn sweep (`03-write-sweep.sh`), `5%` writes across 200 tenants (`5:200`) saw cache hit ratio jump from `82.3%` to **`95.9%` (`4.3×` fewer CDC misses)** and throughput jump **`+52.4%` (`82 → 125 rps`)**; at `10:200`, hit ratio jumped from `78.1%` to **`92.7%` (`+30.4%` higher RPS)**.
+2. **`pgcache_cache_subsumptions` Warm-Up Curve (`0.8.0` vs. `0.7.1`)**:
+   - On **`dashboard_200t`**, in the `15–30s` window, `0.8.0` jumps from `21` to **`577` subsumptions (`+556` in 15s)** and **`61 rps` (`77.5%` hit)** compared to **`294` subsumptions** and `31 rps` on `0.7.1` (**nearly 2× more subsumptions and 2× higher RPS**); by `30–45s`, `0.8.0` has already completed `781/783` subsumptions (`235 rps`, `99.44%` hit) vs. `679/754` (`97 rps`) on `0.7.1` (**`2.42×` faster**).
+   - On **`dashboard_1000t`** (`1,000` tenants), thanks to reduced lock contention (`DashMap`), `0.8.0` completes **`1,180` subsumptions (`70.31%` hit)** in 120s vs. **`930` subsumptions (`61.14%` hit)** on `0.7.1` (**`+26.9%` more subsumptions**), directly explaining the **`2.29×` jump at `1,000` tenants (`55` vs. `24 rps`)** and **`4.67×` jump at `2,000` tenants (`42` vs. `9 rps`)** in Sweep 1!
+   - On **`outer_join_plus_base_200t`** (`LEFT JOIN` + single-table queries over the preserved relation), total subsumptions rise from `783` to **`887` (`+104` additional subsumptions)**, with `0.8.0` accumulating subsumptions **`2.42×` faster** at 30s (`29` vs. `12`).
+3. **Flipping `1,000` and `2,000` Pareto 80/20 Tenants and Dynamic Filters (`t4_dyn`) into Wins**:
+   - On 80/20 Pareto scaling (`04-complex-zipfian-k8s.txt`), `0.8.0` flipped `1,000` tenants from `-49%` (`18 rps`) to **`+53%` (`33 rps`)** and flipped `2,000` tenants from `-77%` (`8 rps`) to **`+27%` (`25 rps`, `3.13×` faster)**!
+   - On `07-admission-threshold-sweep.sh`, `t2_settle` jumped **`3.15×` (`117 → 369 rps`, `100%` hit)** and `t4_dyn` beat the prewarmed Origin by **`+8%` (`35 rps` vs. `33 rps`, `231.46 ms`)**!
+
 ---
 
 ## 16. What this does not prove
@@ -1215,6 +1235,7 @@ pgcache-multi-tenant/
 │   ├── 07-admission-threshold-sweep.sh ADMISSION_THRESHOLD (1, 2, 4) & Cold-Start sweep
 │   ├── 08-nvme-mv-benchmark.sh      Case 1: Regular SSD vs Local NVMe MV study (SCALE=1)
 │   ├── 09-nvme-5gb-stress.sh        Case 2: 5 GB Real Disk-Pressure study (SCALE=10, PgCache SSD vs NVMe)
+│   ├── 10-subsumption-curve.sh      120s pgcache_cache_subsumptions warm-up curve (0.8.0 vs 0.7.1)
 │   ├── deploy-monitoring.sh         deploys Grafana Cloud telemetry stack to Kubernetes
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
 │   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
@@ -1229,7 +1250,8 @@ pgcache-multi-tenant/
     ├── 0.6.4/                       results for PgCache 0.6.4
     ├── 0.7.0/                       results for PgCache 0.7.0
     ├── 0.7.1/                       Part 1 results & complex scenarios for PgCache 0.7.1
-    ├── 0.7.1_v2/                    Part 2 Fair Benchmark, Dynamic Filters & ADMISSION_THRESHOLD study
+    ├── 0.7.1_v2/                    Part 2 Fair Benchmark, Dynamic Filters, ADMISSION_THRESHOLD & SSD vs NVMe
+    ├── 0.8.0/                       PgCache 0.8.0: Outer Join Subsumption, Selective CDC & subsumption curve
     ├── endurance-90m/               1h30m endurance & Origin resource offload runbook
     └── tuned/                       tuned network & engine profile results
 ```

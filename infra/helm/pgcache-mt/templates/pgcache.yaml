@@ -31,6 +31,7 @@ spec:
         app: pgcache
         lab/role: pgcache
     spec:
+      terminationGracePeriodSeconds: 1
       {{- if .Values.hostNetwork.enabled }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet

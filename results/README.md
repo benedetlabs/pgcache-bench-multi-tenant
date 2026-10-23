@@ -2,7 +2,7 @@
 
 > 🇧🇷 **[Ler em português](README-pt.md)**
 
-This folder contains the empirical results of putting **PgCache** in front of **PostgreSQL 17** across multiple product releases (`0.6.3`, `0.6.4`, `0.7.0`, and `0.7.1`) and across two very different kinds of multi-tenant SaaS workloads.
+This folder contains the empirical results of putting **PgCache** in front of **PostgreSQL 17** across multiple product releases (`0.6.3`, `0.6.4`, `0.7.0`, `0.7.1`, `0.7.1_v2`, and `0.8.0`) and across two very different kinds of multi-tenant SaaS workloads.
 
 > **Cloud-Agnostic 3-Node Topology**: Every benchmark in this repository runs on a **3-node Kubernetes cluster in the cloud**, where **PostgreSQL (`origin`)**, **PgCache (`pgcache`)**, and the **benchmark client (`loadgen`)** each run on their own dedicated virtual machine. You can execute this exact suite on **any cloud provider** (AWS EKS, Azure AKS, GCP GKE, DigitalOcean DOKS, etc.); the numbers published below were collected on **DigitalOcean Kubernetes (`3× s-4vcpu-8gb`)**.
 
@@ -12,8 +12,9 @@ Before reading the numbers, check out the [**Workload Architecture & SQL Catalog
 - **Complex Enterprise Screens**: [`workload/complex-search.sql`](../workload/complex-search.sql) (`ILIKE '%...%'` search), [`workload/complex-joins.sql`](../workload/complex-joins.sql) (4–6 table `INNER`/`LEFT JOIN`), [`workload/complex-analytics.sql`](../workload/complex-analytics.sql) (`GROUP BY / HAVING`), [`workload/complex-dashboard.sql`](../workload/complex-dashboard.sql) (8-query unified screen), and [`workload/complex-dashboard-zipfian.sql`](../workload/complex-dashboard-zipfian.sql) (80/20 Pareto traffic).
 
 ### Quick Navigation
+- [**PgCache 0.8.0 — Outer Join Subsumption, Selective Column-Level Invalidation & `pgcache_cache_subsumptions` Warm-Up Curve (`0.8.0` vs. `0.7.1`)**](0.8.0/README.md) *(Latest release — `2026-04-22`)*
+- [**PgCache 0.7.1_v2 (Part 2) — The "Fair Benchmark", Dynamic Filters, `ADMISSION_THRESHOLD` & SSD vs. Local NVMe Study**](0.7.1_v2/README.md) *(Tuned Origin with `GIN pg_trgm` + `2 GiB` Prewarmed, Dynamic Intra-Tenant Filters, and 5 GB Disk-Pressure Study)*
 - [**PgCache 0.7.1 (Part 1) — Multi-Trial (`TRIALS=5`) & Complex Enterprise Scenarios**](0.7.1/README.md) *(Recommended starting point)*
-- [**PgCache 0.7.1_v2 (Part 2) — The "Fair Benchmark", Dynamic Filters & `ADMISSION_THRESHOLD` Study**](0.7.1_v2/README.md) *(Tuned Origin with `GIN pg_trgm` + Covering B-Trees, Dynamic Intra-Tenant Filters, and PgCache Core Developer Feedback)*
 - [**1h30m Endurance & Database Offload Test (`SCALE=20`, ~10 GB)**](endurance-90m/README.md)
 - [**Network & Engine Tuning Comparison (`0.7.0` Tuned)**](tuned/README.md)
 - Historical Releases: [**0.6.3**](0.6.3/README.md) · [**0.6.4**](0.6.4/README.md) · [**0.7.0**](0.7.0/README.md)
@@ -77,8 +78,9 @@ When we scale concurrent users on the heavy enterprise screen (`complex-dashboar
 
 ## 4. Folder Guide
 
+- [`0.8.0/`](0.8.0/README.md): **PgCache 0.8.0 (`2026-04-22`)** — Full 3-node DOKS benchmark evaluation (`TRIALS=3`) demonstrating `-75%` redundant CDC invalidations (`12 → 3`), `+52.4%` higher write-churn throughput (`5:200`), positive net speedup at `1,000` and `2,000` Pareto 80/20 tenants (`+53%` and `+27%`), an outright `+8%` win over Origin on dynamic filters (`t4_dyn`), and the 120-second **`pgcache_cache_subsumptions` (`0.8.0` vs. `0.7.1`)** warm-up curve.
 - [`0.7.1/`](0.7.1/README.md): Full write-up and raw logs for **PgCache 0.7.1 (Part 1)** (5-trial statistical runs, complex scenarios, 80/20 Pareto scaling, and live write tests).
-- [`0.7.1_v2/`](0.7.1_v2/README.md): **PgCache 0.7.1_v2 (Part 2)** — The "Fair Benchmark" against a fully tuned Origin (`GIN pg_trgm` + Covering B-Trees + `work_mem=64MB`), dynamic intra-tenant filters (`complex-dashboard-dynamic.sql`), and the `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) + Internal Pass-Through Warm-Up investigation based on PgCache core developer feedback.
+- [`0.7.1_v2/`](0.7.1_v2/README.md): **PgCache 0.7.1_v2 (Part 2)** — The "Fair Benchmark" against a fully tuned Origin (`GIN pg_trgm` + `2 GiB` prewarmed `shared_buffers`), dynamic intra-tenant filters (`complex-dashboard-dynamic.sql`), `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) study, and 5 GB real disk-pressure study (`SCALE=10`, Regular SSD vs Local NVMe).
 - [`endurance-90m/`](endurance-90m/README.md): **1h30m Endurance & Resource Offload Test** on a ~10 GB dataset (`54.5M` rows), showing how offloading reads to PgCache cuts PostgreSQL write latency in half (`227 ms → 103 ms`).
 - [`tuned/`](tuned/README.md): Side-by-side comparison of default vs. tuned Linux network stack (`tcp_tw_reuse`, VirtIO RPS, direct node IP routing).
 - [`0.6.3/`](0.6.3/README.md), [`0.6.4/`](0.6.4/README.md), [`0.7.0/`](0.7.0/README.md): Historical baseline runs.
