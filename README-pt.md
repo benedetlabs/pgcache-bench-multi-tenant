@@ -33,7 +33,8 @@ comandos; o resto é o raciocínio, incluindo as partes em que erramos.
 15. [Por que a forma da query decide tudo](#15-por-que-a-forma-da-query-decide-tudo)
    - [15.1 Varredura 4 — cenários complexos de SaaS multi-tenant (PgCache 0.7.1)](#151-varredura-4--o-que-acontece-quando-as-consultas-ficam-pesadas-pgcache-071)
    - [15.2 Varredura 5 — longa duração (1h30m) e alívio de recursos na Origem (DOKS + Grafana Cloud)](#152-varredura-5--teste-de-resistência-de-1h30m-em-um-banco-de-10-gb-doks--grafana-cloud)
-   - [15.3 Varreduras 6 e 7 — O "Teste Justo", Filtros Dinâmicos e Estudo de `ADMISSION_THRESHOLD` (`0.7.1_v2`)](#153-varreduras-6-e-7--o-teste-justo-filtros-dinâmicos-e-estudo-de-admission_threshold-071_v2)
+   - [15.3 Varreduras 6 a 9 — O "Teste Justo", Filtros Dinâmicos, `ADMISSION_THRESHOLD` e Estudo de Disco SSD vs. NVMe Local (`0.7.1_v2`)](#153-varreduras-6-a-9--o-teste-justo-filtros-dinâmicos-admission_threshold-e-estudo-de-disco-ssd-vs-nvme-local-071_v2)
+   - [15.4 Varredura 10 — PgCache 0.8.0, Subsumption em Outer Joins, Invalidação Seletiva por Coluna e Curva de `pgcache_cache_subsumptions` (`0.8.0` vs. `0.7.1`)](#154-varredura-10--pgcache-080-subsumption-em-outer-joins-invalidação-seletiva-por-coluna-e-curva-de-pgcache_cache_subsumptions-080-vs-071)
 16. [O que isto não prova](#16-o-que-isto-não-prova)
 17. [Apêndice: todos os arquivos](#17-apêndice-todos-os-arquivos)
 
@@ -1162,6 +1163,25 @@ Consulte **[`results/0.7.1_v2/README-pt.md`](results/0.7.1_v2/README-pt.md)** pa
 - Como o `ADMISSION_THRESHOLD=4` elimina 100% da regressão de `-56%` em filtros dinâmicos (`235,77 ms / 34 telas/s`) e corta a latência de partida a frio em **58% a 76%**.
 - Como isolar o `PgCache` em **NVMe Local** (mantendo o `Origin` em SSD Padrão) sob pressão real de disco em 5 GB reduz a latência em **`3,86×`** nos trials estabilizados de `mv5g_heavy` (superando o Origin em **`+25%`**), reduz a latência em até **`14,17×`** sob hit parcial em `mv5g_dash` (**`+66,7%` a `+100%` sobre o Origin**), e reduz a latência média sob invalidação CDC (`mv5g_cdc9010`) em **`9,66×` (`36.361,7 ms` $\rightarrow$ `3.763,4 ms`, e `60,38×` no pico do Trial 1)**!
 
+### 15.4 Varredura 10 — PgCache 0.8.0, Subsumption em Outer Joins, Invalidação Seletiva por Coluna e Curva de `pgcache_cache_subsumptions` (`0.8.0` vs. `0.7.1`)
+
+**Driver: [`scripts/10-subsumption-curve.sh`](scripts/10-subsumption-curve.sh)** ·
+**Log da Curva: [`results/0.8.0/10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt`](results/0.8.0/10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt)** ·
+**Relatório Completo: [`results/0.8.0/README-pt.md`](results/0.8.0/README-pt.md)**
+
+Com o lançamento do **PgCache `0.8.0`** (`2026-04-22`), reexecutamos toda a bateria oficial em 3 nós DOKS (`TRIALS=3` com recriação completa do pod do PgCache) e medimos a curva de aquecimento janela a janela (`8 × 15s = 120s`) da métrica `pgcache_cache_subsumptions` comparando `0.8.0` contra `0.7.1`:
+
+1. **Invalidação Seletiva por Coluna em `UPDATE` (`-75%` de Invalidações Redundantes)**:
+   - No gate diferencial pós-CDC (`verify-correctness.sh`), as mutações `UPDATE orders` + `INSERT INTO order_item` reduziram `pgcache_cache_invalidations` de **`12` para `3` (-75%)**.
+   - Na bateria de escrita contínua (`03-write-sweep.sh`), `5%` de escritas em 200 tenants (`5:200`) elevou a taxa de acerto de `82,3%` para **`95,9%` (`4,3×` menos misses CDC)** e a vazão em **`+52,4%` (`82 → 125 rps`)**; em `10:200`, o acerto subiu de `78,1%` para **`92,7%` (`+30,4%` mais RPS)**.
+2. **Curva de `pgcache_cache_subsumptions` no Warm-Up (`0.8.0` vs. `0.7.1`)**:
+   - Em **`dashboard_200t`**, na janela de `15–30s`, o `0.8.0` salta de `21` para **`577` subsumptions (`+556` em 15s)** e **`61 rps` (`77,5%` hit)** contra apenas **`294` subsumptions** e `31 rps` no `0.7.1` (**quase 2× mais subsumptions e 2× mais RPS**); aos `30–45s`, o `0.8.0` já completou `781/783` subsumptions (`235 rps`, `99,44%` hit) contra `679/754` (`97 rps`) no `0.7.1` (**`2,42×` mais rápido**).
+   - Em **`dashboard_1000t`** (`1.000` tenants), graças à remoção de contenção de lock (`DashMap`), o `0.8.0` acumula **`1.180` subsumptions (`70,31%` hit)** em 120s contra **`930` subsumptions (`61,14%` hit)** no `0.7.1` (**`+26,9%` mais subsumptions**), o que explica o salto de **`2,29×` em `1.000` tenants (`55` vs `24 rps`)** e **`4,67×` em `2.000` tenants (`42` vs `9 rps`)** na Varredura 1!
+   - Em **`outer_join_plus_base_200t`** (`LEFT JOIN` + consultas de tabela única sobre a relação preservada), o total sobe de `783` para **`887` subsumptions (`+104` subsumptions adicionais)**, com rampa inicial **2,42× mais rápida** aos 30s (`29` vs `12`).
+3. **Virada de Jogo em `1.000` e `2.000` Tenants Pareto 80/20 e em Filtros Dinâmicos (`t4_dyn`)**:
+   - Na escala Pareto 80/20 (`04-complex-zipfian-k8s.txt`), o `0.8.0` virou `1.000` tenants de `-49%` (`18 rps`) para **`+53%` (`33 rps`)** e virou `2.000` tenants de `-77%` (`8 rps`) para **`+27%` (`25 rps`, `3,13×` mais rápido)**!
+   - Em `07-admission-threshold-sweep.sh`, `t2_settle` subiu **`3,15×` (`117 → 369 rps`, `100%` hit)** e `t4_dyn` superou o próprio Origin tunado em **`+8%` (`35 rps` vs `33 rps`, `231,46 ms`)**!
+
 ---
 
 ## 16. O que isto não prova
@@ -1230,6 +1250,7 @@ pgcache-multi-tenant/
 │   ├── 07-admission-threshold-sweep.sh Varredura de ADMISSION_THRESHOLD (1, 2, 4) e Cold-Start
 │   ├── 08-nvme-mv-benchmark.sh      Caso 1: Estudo de MVs em SSD Regular vs NVMe Local (SCALE=1)
 │   ├── 09-nvme-5gb-stress.sh        Caso 2: Estudo Isolado de Pressão de Disco em 5 GB (SCALE=10, PgCache SSD vs NVMe)
+│   ├── 10-subsumption-curve.sh      Curva de 120s de pgcache_cache_subsumptions no warm-up (0.8.0 vs 0.7.1)
 │   ├── deploy-monitoring.sh         deploy da stack de telemetria Grafana Cloud no Kubernetes
 │   ├── verify-correctness.sh        gate diferencial de correção, cacheabilidade e MVs
 │   ├── aks-cluster.sh               script automatizado de cluster Azure AKS Spot via Terraform
@@ -1244,7 +1265,8 @@ pgcache-multi-tenant/
     ├── 0.6.4/                       resultados para PgCache 0.6.4
     ├── 0.7.0/                       resultados para PgCache 0.7.0
     ├── 0.7.1/                       Parte 1: resultados e cenários complexos para PgCache 0.7.1
-    ├── 0.7.1_v2/                    Parte 2: Teste Justo, Filtros Dinâmicos e estudo de ADMISSION_THRESHOLD
+    ├── 0.7.1_v2/                    Parte 2: Teste Justo, Filtros Dinâmicos, ADMISSION_THRESHOLD e SSD vs NVMe
+    ├── 0.8.0/                       PgCache 0.8.0: Subsumption em Outer Joins, CDC seletivo e curva de subsumptions
     ├── endurance-90m/               runbook de longa duração (1h30m) e alívio de recursos na Origem
     └── tuned/                       resultados do perfil otimizado de rede e engine
 ```

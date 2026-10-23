@@ -121,3 +121,4 @@ for thresh in 1 2 4; do
     cell "t${thresh}_dyn"    -f /tmp/mt/complex-dashboard-dynamic.sql   -D tenants="$TENANTS"
   fi
 done
+

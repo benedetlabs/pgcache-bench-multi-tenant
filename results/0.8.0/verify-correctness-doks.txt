@@ -1,0 +1,53 @@
+========================================================================
+ Running Differential Correctness, Cacheability & Post-CDC Gate (k8s)
+========================================================================
+--> [Stage 1/3] Checking 8 Baseline Queries (workload/dashboard.sql)...
+  [PASS] Baseline Query #1 : Origin == PgCache (pass 1 & 2 identical, 1 rows)
+  [PASS] Baseline Query #2 : Origin == PgCache (pass 1 & 2 identical, 1 rows)
+  [PASS] Baseline Query #3 : Origin == PgCache (pass 1 & 2 identical, 1 rows)
+  [PASS] Baseline Query #4 : Origin == PgCache (pass 1 & 2 identical, 20 rows)
+  [PASS] Baseline Query #5 : Origin == PgCache (pass 1 & 2 identical, 1 rows)
+  [PASS] Baseline Query #6 : Origin == PgCache (pass 1 & 2 identical, 10 rows)
+  [PASS] Baseline Query #7 : Origin == PgCache (pass 1 & 2 identical, 10 rows)
+  [PASS] Baseline Query #8 : Origin == PgCache (pass 1 & 2 identical, 20 rows)
+  Baseline Summary: 8/8 passed | Uncacheable delta: 0 | Errors delta: 0
+
+--> [Stage 2/3] Checking 12 Complex Queries (Pass 1 Miss -> Pass 2 Base Hit/MV Build -> Pass 3 Warm MV Hit)...
+  [PASS] Complex Query #1 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Complex Query #2 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Complex Query #3 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Complex Query #4 : Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Complex Query #5 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Complex Query #6 : Origin == PgCache (pass 1, 2 & 3 identical, 10 rows)
+  [PASS] Complex Query #7 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Complex Query #8 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Complex Query #9 : Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Complex Query #10: Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+  [PASS] Complex Query #11: Origin == PgCache (pass 1, 2 & 3 identical, 15 rows)
+  [PASS] Complex Query #12: Origin == PgCache (pass 1, 2 & 3 identical, 20 rows)
+
+--> [Stage 3/3] Checking Post-CDC Live Mutation Correctness (Pass 4 after Origin UPDATE + INSERT)...
+NOTICE:  relation "orders_id_seq" already exists, skipping
+NOTICE:  relation "order_item_id_seq" already exists, skipping
+  [PASS] Post-CDC Query #1 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #2 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #3 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #4 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #5 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #6 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #7 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #8 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #9 : Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #10: Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #11: Origin == PgCache after live CDC UPDATE + INSERT
+  [PASS] Post-CDC Query #12: Origin == PgCache after live CDC UPDATE + INSERT
+
+------------------------------------------------------------------------
+  Baseline Queries:    8/8 passed
+  Complex Static:      12/12 passed (Cacheable delta: 36/36)
+  Complex Post-CDC:    12/12 passed (CDC Events Processed: 16)
+  Uncacheable delta:   0 (expected 0)
+  MV Gate Admitted:    12 (expected 12, Rejected: 0)
+  MV Hits delta:       12 (expected 12)
+  Cache Errors delta:  0 (expected 0)
+========================================================================

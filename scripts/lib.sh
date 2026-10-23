@@ -27,7 +27,7 @@ CLIENTS="${CLIENTS:-8}"
 THREADS="${THREADS:-4}"
 DURATION="${DURATION:-30}"
 TRIALS="${TRIALS:-5}"
-RECREATE_PODS_MODE="${RECREATE_PODS_MODE:-all}" # "all" (origin+pgcache+loadgen) or "pgcache"
+RECREATE_PODS_MODE="${RECREATE_PODS_MODE:-pgcache}" # "all" (origin+pgcache+loadgen) or "pgcache"
 
 BENCH_ENV="${BENCH_ENV:-${TARGET_ENV:-}}"
 if [ -z "$BENCH_ENV" ]; then
@@ -187,6 +187,7 @@ warm_until_settled() {
 # Cleanly recreates the pgcache pod/container so that SysV shared memory
 # segments (pgcache_pgrx DSA) and registered MVs are released.
 reset_pgcache() {
+  ex "psql -h \$ORIGIN_HOST -p \$ORIGIN_PORT -U \$PGUSER -d \$PGDATABASE -q -c 'DELETE FROM order_item WHERE id >= 100000000; DELETE FROM orders WHERE id >= 100000000;' >/dev/null 2>&1" || true
   if [ "$BENCH_ENV" = "docker" ]; then
     docker compose -f "$REPO_ROOT/infra/docker-compose.yml" up -d --force-recreate --renew-anon-volumes pgcache >/dev/null 2>&1
     local tries=0
@@ -202,7 +203,7 @@ reset_pgcache() {
   else
     kubectl -n "$NS" delete pod --field-selector=status.phase!=Running >/dev/null 2>&1 || true
     kubectl taint nodes --all node.kubernetes.io/memory-pressure:NoSchedule- >/dev/null 2>&1 || true
-    kubectl -n "$NS" rollout restart deploy/pgcache >/dev/null 2>&1 || true
+    kubectl -n "$NS" delete pod -l app=pgcache --grace-period=1 --wait=true >/dev/null 2>&1 || true
     kubectl -n "$NS" rollout status deploy/pgcache --timeout=3m >/dev/null 2>&1 || true
     unset CACHED_PGCACHE_IP
     local ip mport tries=0
@@ -215,7 +216,7 @@ reset_pgcache() {
     while [ $tries -lt 30 ]; do
       ip="$(pgcache_ip)"
       if [ -n "$ip" ] && \
-         kubectl -n "$NS" exec deploy/metrics-reader -- sh -c "wget -qO- --timeout=5 http://$ip:$mport/metrics" 2>/dev/null | grep -q "pgcache_queries_" && \
+         (kubectl -n "$NS" exec deploy/metrics-reader -- sh -c "wget -qO- --timeout=5 http://$ip:$mport/metrics" 2>/dev/null || true) | grep -q "pgcache_queries_" && \
          ex "pg_isready -h \$PGCACHE_HOST -p \$PGCACHE_PORT -U \$PGUSER -d \$PGDATABASE >/dev/null 2>&1"; then
         sleep 1
         return 0

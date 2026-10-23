@@ -1,0 +1,131 @@
+
+========================================================================
+ Setting PgCache ADMISSION_THRESHOLD=1 (TRIALS=3)
+========================================================================
+deployment.apps/pgcache env updated
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 of 1 updated replicas are available...
+deployment "pgcache" successfully rolled out
+adm_t=1    A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+
+
+  [Trial 1/3] t1_cold0s  | A: 249.311 ms (32 rps) | B: 807.987 ms (10 rps) | hit: 3.99% | gain: -68.8% | warm: 0s
+
+
+  [Trial 2/3] t1_cold0s  | A: 264.526 ms (30 rps) | B: 848.851 ms (9 rps) | hit: 5.60% | gain: -70.0% | warm: 0s
+
+
+  [Trial 3/3] t1_cold0s  | A: 252.129 ms (32 rps) | B: 871.936 ms (9 rps) | hit: 4.04% | gain: -71.9% | warm: 0s
+t1_cold0s    255.32      31    842.92       9    4.54%   -70.2%  0s           | A_rps -1.3/+0.7 (sd 1.2) | B_rps -0.3/+0.7 (sd 0.6) | B_lat -34.9/+29.0 (sd 32.4) ms
+
+
+  [Trial 1/3] t1_w30s    | A: 298.453 ms (27 rps) | B: 979.636 ms (8 rps) | hit: 31.04% | gain: -70.4% | warm: 30s
+
+
+  [Trial 2/3] t1_w30s    | A: 274.782 ms (29 rps) | B: 973.521 ms (8 rps) | hit: 27.47% | gain: -72.4% | warm: 30s
+
+
+  [Trial 3/3] t1_w30s    | A: 257.168 ms (31 rps) | B: 976.440 ms (8 rps) | hit: 28.60% | gain: -74.2% | warm: 30s
+t1_w30s      276.80      29    976.53       8   29.04%   -72.4%  30s          | A_rps -2.0/+2.0 (sd 2.0) | B_rps -0.0/+0.0 (sd 0.0) | B_lat -3.0/+3.1 (sd 3.1) ms
+
+========================================================================
+ Setting PgCache ADMISSION_THRESHOLD=2 (TRIALS=3)
+========================================================================
+deployment.apps/pgcache env updated
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "pgcache" rollout to finish: 0 of 1 updated replicas are available...
+deployment "pgcache" successfully rolled out
+adm_t=2    A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+
+
+  [Trial 1/3] t2_cold0s  | A: 278.354 ms (29 rps) | B: 679.615 ms (12 rps) | hit: 3.44% | gain: -58.6% | warm: 0s
+
+
+  [Trial 2/3] t2_cold0s  | A: 280.647 ms (29 rps) | B: 734.784 ms (11 rps) | hit: 5.51% | gain: -62.1% | warm: 0s
+
+
+  [Trial 3/3] t2_cold0s  | A: 275.561 ms (29 rps) | B: 708.660 ms (11 rps) | hit: 3.82% | gain: -62.1% | warm: 0s
+t2_cold0s    278.19      29    707.69      11    4.26%   -60.9%  0s           | A_rps -0.0/+0.0 (sd 0.0) | B_rps -0.3/+0.7 (sd 0.6) | B_lat -28.1/+27.1 (sd 27.6) ms
+
+
+  [Trial 1/3] t2_w30s    | A: 239.390 ms (33 rps) | B: 698.651 ms (11 rps) | hit: 23.55% | gain: -66.7% | warm: 30s
+
+
+  [Trial 2/3] t2_w30s    | A: 307.840 ms (26 rps) | B: 553.580 ms (14 rps) | hit: 34.95% | gain: -46.2% | warm: 30s
+
+
+  [Trial 3/3] t2_w30s    | A: 269.486 ms (30 rps) | B: 564.647 ms (14 rps) | hit: 29.81% | gain: -53.3% | warm: 30s
+t2_w30s      272.24      30    605.63      13   29.44%   -56.2%  30s          | A_rps -3.7/+3.3 (sd 3.5) | B_rps -2.0/+1.0 (sd 1.7) | B_lat -52.0/+93.0 (sd 80.8) ms
+
+
+  [Trial 1/3] t2_settle | A: 269.075 ms (30 rps) | B: 31.522 ms (254 rps) | hit: 99.87% | gain: +746.7% | warm: 8
+
+
+  [Trial 2/3] t2_settle | A: 249.581 ms (32 rps) | B: 17.919 ms (446 rps) | hit: 100.00% | gain: +1293.8% | warm: 8
+
+
+  [Trial 3/3] t2_settle | A: 259.996 ms (31 rps) | B: 19.646 ms (407 rps) | hit: 100.00% | gain: +1212.9% | warm: 8
+t2_settle   259.551     31     23.029    369   100.0%   +1084%   8.0  | A_rps_dev: -1/+1 (sd 1.0) | B_rps_dev: -115/+77 (sd 101.5) | gain_dev: -338%/+209%
+
+
+  [Trial 1/3] t2_dyn    | A: 193.580 ms (41 rps) | B: 263.649 ms (30 rps) | hit: 48.14% | gain: -26.8% | warm: 8
+
+
+  [Trial 2/3] t2_dyn    | A: 209.112 ms (38 rps) | B: 266.470 ms (30 rps) | hit: 46.21% | gain: -21.1% | warm: 8
+
+
+  [Trial 3/3] t2_dyn    | A: 234.601 ms (34 rps) | B: 217.230 ms (37 rps) | hit: 48.21% | gain: +8.8% | warm: 8
+t2_dyn      212.431     38    249.116     32    47.5%     -13%   8.0  | A_rps_dev: -4/+3 (sd 3.5) | B_rps_dev: -2/+5 (sd 4.0) | gain_dev: -14%/+22%
+
+========================================================================
+ Setting PgCache ADMISSION_THRESHOLD=4 (TRIALS=3)
+========================================================================
+deployment.apps/pgcache env updated
+Waiting for deployment "pgcache" rollout to finish: 0 of 1 updated replicas are available...
+deployment "pgcache" successfully rolled out
+adm_t=4    A_lat_ms  A_rps   B_lat_ms  B_rps      hit     gain  warm  | Multi-Trial Deviation (TRIALS=3, -Δ/+Δ & stddev)
+
+
+  [Trial 1/3] t4_cold0s  | A: 246.801 ms (32 rps) | B: 379.575 ms (21 rps) | hit: 1.60% | gain: -34.4% | warm: 0s
+
+
+  [Trial 2/3] t4_cold0s  | A: 265.169 ms (30 rps) | B: 420.583 ms (19 rps) | hit: 2.02% | gain: -36.7% | warm: 0s
+
+
+  [Trial 3/3] t4_cold0s  | A: 224.183 ms (36 rps) | B: 408.036 ms (20 rps) | hit: 4.43% | gain: -44.4% | warm: 0s
+t4_cold0s    245.38      33    402.73      20    2.68%   -38.8%  0s           | A_rps -2.7/+3.3 (sd 3.1) | B_rps -1.0/+1.0 (sd 1.0) | B_lat -23.2/+17.9 (sd 21.0) ms
+
+
+  [Trial 1/3] t4_w30s    | A: 282.604 ms (28 rps) | B: 307.427 ms (26 rps) | hit: 21.85% | gain: -7.1% | warm: 30s
+
+
+  [Trial 2/3] t4_w30s    | A: 271.548 ms (29 rps) | B: 245.024 ms (33 rps) | hit: 22.75% | gain: +13.8% | warm: 30s
+
+
+  [Trial 3/3] t4_w30s    | A: 297.248 ms (27 rps) | B: 388.317 ms (21 rps) | hit: 21.64% | gain: -22.2% | warm: 30s
+t4_w30s      283.80      28    313.59      27   22.08%    -4.8%  30s          | A_rps -1.0/+1.0 (sd 1.0) | B_rps -5.7/+6.3 (sd 6.0) | B_lat -68.6/+74.7 (sd 71.8) ms
+
+
+  [Trial 1/3] t4_settle | A: 232.757 ms (34 rps) | B: 259.688 ms (31 rps) | hit: 30.09% | gain: -8.8% | warm: 6
+
+
+  [WARN] Cell t4_settle (trial 2/3): uncacheable_delta=0, cache_error_delta=1
+  [Trial 2/3] t4_settle | A: 234.294 ms (34 rps) | B: 242.565 ms (33 rps) | hit: 33.46% | gain: -2.9% | warm: 8
+
+
+  [Trial 3/3] t4_settle | A: 255.189 ms (31 rps) | B: 273.234 ms (29 rps) | hit: 26.68% | gain: -6.5% | warm: 4
+t4_settle   240.747     33    258.496     31    30.1%      -6%   6.0  | A_rps_dev: -2/+1 (sd 1.7) | B_rps_dev: -2/+2 (sd 2.0) | gain_dev: -3%/+3%
+
+
+  [Trial 1/3] t4_dyn    | A: 276.040 ms (29 rps) | B: 278.200 ms (29 rps) | hit: 16.09% | gain: +0.0% | warm: 4
+
+
+  [Trial 2/3] t4_dyn    | A: 243.215 ms (33 rps) | B: 213.899 ms (37 rps) | hit: 18.93% | gain: +12.1% | warm: 5
+
+
+  [Trial 3/3] t4_dyn    | A: 221.848 ms (36 rps) | B: 202.270 ms (40 rps) | hit: 19.76% | gain: +11.1% | warm: 6
+t4_dyn      247.034     33    231.456     35    18.3%      +8%   5.0  | A_rps_dev: -4/+3 (sd 3.5) | B_rps_dev: -6/+5 (sd 5.7) | gain_dev: -8%/+4%

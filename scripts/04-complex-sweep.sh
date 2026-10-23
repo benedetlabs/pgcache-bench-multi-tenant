@@ -21,7 +21,7 @@
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 
-MODE="${1:-all}"
+MODE="${1:-${SCENARIOS:-all}}"
 TENANTS="${TENANTS:-200}"
 TENANTS_LIST="${TENANTS_LIST:-1 10 50 200 500 1000}"
 ZIPF_TENANTS_LIST="${ZIPF_TENANTS_LIST:-100 200 500 1000 2000}"

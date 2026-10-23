@@ -2,7 +2,7 @@
 
 > 🇺🇸 **[Read in English](README.md)**
 
-Esta pasta reúne os resultados práticos de colocar o **PgCache** na frente do **PostgreSQL 17** ao longo de várias versões (`0.6.3`, `0.6.4`, `0.7.0` e `0.7.1`) e em dois perfis bem diferentes de aplicações SaaS multi-tenant.
+Esta pasta reúne os resultados práticos de colocar o **PgCache** na frente do **PostgreSQL 17** ao longo de várias versões (`0.6.3`, `0.6.4`, `0.7.0`, `0.7.1`, `0.7.1_v2` e `0.8.0`) e em dois perfis bem diferentes de aplicações SaaS multi-tenant.
 
 > **Topologia Cloud de 3 Nós (Qualquer Provedor)**: Todos os benchmarks deste repositório rodam em um **cluster Kubernetes de 3 nós na nuvem**, onde o **PostgreSQL (`origin`)**, o **PgCache (`pgcache`)** e o **gerador de carga (`loadgen`)** ficam em três máquinas virtuais dedicadas e separadas. Essa mesma bateria pode ser executada em **qualquer provedor de nuvem** (AWS EKS, Azure AKS, GCP GKE, DigitalOcean DOKS, etc.); os números publicados abaixo foram coletados na **DigitalOcean (`3× s-4vcpu-8gb`)**.
 
@@ -12,8 +12,9 @@ Antes de olhar os números, consulte o [**Guia de Workloads e Consultas SQL (`wo
 - **Telas Corporativas Complexas**: [`workload/complex-search.sql`](../workload/complex-search.sql) (busca textual `ILIKE '%...%'`), [`workload/complex-joins.sql`](../workload/complex-joins.sql) (`INNER` e `LEFT JOIN` de 4 a 6 tabelas), [`workload/complex-analytics.sql`](../workload/complex-analytics.sql) (`GROUP BY / HAVING`), [`workload/complex-dashboard.sql`](../workload/complex-dashboard.sql) (tela completa de 8 consultas) e [`workload/complex-dashboard-zipfian.sql`](../workload/complex-dashboard-zipfian.sql) (tráfego Pareto 80/20).
 
 ### Navegação Rápida
+- [**PgCache 0.8.0 — Subsumption em Outer Joins, Invalidação Seletiva por Coluna e Curva de `pgcache_cache_subsumptions` (`0.8.0` vs. `0.7.1`)**](0.8.0/README-pt.md) *(Versão mais recente — `2026-04-22`)*
+- [**PgCache 0.7.1_v2 (Parte 2) — O "Teste Justo", Filtros Dinâmicos, `ADMISSION_THRESHOLD` e SSD vs. NVMe Local**](0.7.1_v2/README-pt.md) *(Origem Otimizada com `GIN pg_trgm` + `2 GiB` Prewarmed, Filtros Dinâmicos Intra-Tenant e Estudo de Disco em 5 GB)*
 - [**PgCache 0.7.1 (Parte 1) — Bateria de 5 Rodadas (`TRIALS=5`) e Cenários Corporativos Complexos**](0.7.1/README-pt.md) *(Ponto de partida recomendado)*
-- [**PgCache 0.7.1_v2 (Parte 2) — O "Teste Justo", Filtros Dinâmicos e Estudo de `ADMISSION_THRESHOLD`**](0.7.1_v2/README-pt.md) *(Origem Otimizada com `GIN pg_trgm` + B-Trees de Cobertura, Filtros Dinâmicos Intra-Tenant e Devolutiva dos Core Devs do PgCache)*
 - [**Teste de Resistência de 1h30m e Alívio do Banco Principal (`SCALE=20`, ~10 GB)**](endurance-90m/README-pt.md)
 - [**Comparativo de Ajuste Fino de Rede e Engine (`0.7.0` Tuned)**](tuned/README-pt.md)
 - Versões Anteriores: [**0.6.3**](0.6.3/README-pt.md) · [**0.6.4**](0.6.4/README-pt.md) · [**0.7.0**](0.7.0/README-pt.md)
@@ -77,8 +78,9 @@ Quando aumentamos os usuários simultâneos na tela corporativa pesada (`complex
 
 ## 4. Guia das Pastas
 
+- [`0.8.0/`](0.8.0/README-pt.md): **PgCache 0.8.0 (`2026-04-22`)** — Avaliação completa em 3 nós DOKS (`TRIALS=3`) demonstrando `-75%` de invalidações CDC redundantes (`12 → 3`), `+52,4%` de vazão sob escrita contínua (`5:200`), ganho líquido positivo em `1.000` e `2.000` tenants Pareto 80/20 (`+53%` e `+27%`), vitória de `+8%` sobre o Origin em filtros dinâmicos (`t4_dyn`), e a curva comparativa de 120s de **`pgcache_cache_subsumptions` (`0.8.0` vs. `0.7.1`)**.
 - [`0.7.1/`](0.7.1/README-pt.md): Relatório completo e logs da versão **PgCache 0.7.1 (Parte 1)** (bateria de 5 rodadas com recriação de pods, cenários complexos, escala Pareto 80/20 e testes de escrita ao vivo).
-- [`0.7.1_v2/`](0.7.1_v2/README-pt.md): **PgCache 0.7.1_v2 (Parte 2)** — O "Teste Justo" contra um PostgreSQL de Origem totalmente otimizado (`GIN pg_trgm` + B-Trees de cobertura + `work_mem=64MB`), filtros dinâmicos intra-tenant (`complex-dashboard-dynamic.sql`) e a investigação de `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) + Warm-Up Interno em Pass-Through baseada no feedback dos desenvolvedores do PgCache.
+- [`0.7.1_v2/`](0.7.1_v2/README-pt.md): **PgCache 0.7.1_v2 (Parte 2)** — O "Teste Justo" contra um PostgreSQL de Origem totalmente otimizado (`GIN pg_trgm` + `2 GiB shared_buffers` prewarmed), filtros dinâmicos intra-tenant (`complex-dashboard-dynamic.sql`), investigação de `ADMISSION_THRESHOLD` (`1` vs `2` vs `4`) e estudo de pressão de disco em 5 GB (`SCALE=10`, SSD Padrão vs NVMe Local).
 - [`endurance-90m/`](endurance-90m/README-pt.md): **Teste de Resistência de 1h30m e Alívio do Banco Principal** em um banco de ~10 GB (`54,5M` linhas), mostrando como tirar o peso das leituras do PostgreSQL reduz a latência de escrita pela metade (`227 ms → 103 ms`).
 - [`tuned/`](tuned/README-pt.md): Comparativo entre a configuração padrão e o ajuste fino de rede Linux (`tcp_tw_reuse`, VirtIO RPS, roteamento direto por IP).
 - [`0.6.3/`](0.6.3/README-pt.md), [`0.6.4/`](0.6.4/README-pt.md), [`0.7.0/`](0.7.0/README-pt.md): Rodadas históricas do baseline.
