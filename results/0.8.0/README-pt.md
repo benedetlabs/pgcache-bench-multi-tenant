@@ -229,37 +229,7 @@ Em `cplx_dyn_200t` ([`workload/complex-dashboard-dynamic.sql`](../../workload/co
 
 ---
 
-## 5. Mensagem Pronta (em Inglês) para Enviar ao James sobre a `0.8.0` e `pgcache.cache.subsumptions`
-
-Caso queira compartilhar os resultados da `0.8.0` e a curva de `pgcache.cache.subsumptions` diretamente com o James:
-
-> **Subject / Message to James:**
->
-> Hey James! We ran the full 3-node DOKS benchmark suite on **PgCache `0.8.0`** (`TRIALS=3` with pod recreation) plus a dedicated **120-second warm-up curve (`8 × 15s` windows)** tracking `pgcache_cache_subsumptions` and `pgcache_cache_writer_register_subsumption_check_seconds_count` side-by-side on **`0.8.0` vs. `0.7.1`**.
->
-> Here are the highlights:
->
-> **1. `pgcache_cache_subsumptions` Warm-up Curve (`0.8.0` vs. `0.7.1`)**:
-> - **200-Tenant Operational Dashboard (`2,200` unique queries)**:
->   - In the critical **`15–30s`** warm-up window, `0.8.0` jumped from `21` to **`577` subsumptions (`+556` in 15s)** and reached **`61 rps` (`77.5%` hit)**, whereas `0.7.1` only reached **`294` subsumptions (`+252`)** and **`31 rps` (`66.6%` hit)** — nearly **2× more subsumptions and 2× higher throughput** at the 30s mark.
->   - By **`30–45s`**, `0.8.0` had already completed **`781 / 783` subsumptions (`99.44%` hit, `235 rps` / `34.0 ms`)**, while `0.7.1` was at **`679 / 754` subsumptions (`95.87%` hit, `97 rps` / `82.9 ms`)** — **`2.42×` higher throughput at 45s**.
-> - **1,000-Tenant Operational Dashboard (`11,000` unique queries)**:
->   - Thanks to the reduced lock contention (`DashMap` + reading table clocks outside the exclusive lock), over the 120s ramp `0.8.0` completed **`6,415` subsumption checks and `1,180` subsumptions (`70.31%` hit)** vs. **`5,800` checks and `930` subsumptions (`61.14%` hit)** on `0.7.1` (**`+26.9%` more subsumptions and `+9.17 pp` higher hit ratio**).
->   - In the full `01-tenant-sweep.sh`, that translated to **`2.29×` higher throughput at `1,000` tenants (`55 rps / 88.1% hit` vs. `24 rps / 62.5% hit`)** and **`4.67×` higher throughput at `2,000` tenants (`42 rps / 49.2% hit` vs. `9 rps / 20.6% hit`)**!
-> - **Outer Join + Single-Table Preserved Relation (`complex-joins.sql` + `dashboard.sql`, 200 tenants)**:
->   - Total subsumptions rose from `783` (dashboard alone) to **`887` (`+104` additional subsumptions)**, with `0.8.0` accumulating subsumptions **`2.42×` faster at 30s (`29` vs `12`)** and **`+34%` faster at 60s (`188` vs `140`)**.
->
-> **2. Selective Column-Level UPDATE Invalidation**:
-> - In our differential post-CDC correctness gate (`verify-correctness.sh`), live `UPDATE orders` + `INSERT INTO order_item` mutations triggered only **`3` `pgcache_cache_invalidations` on `0.8.0` vs. `12` on `0.7.1` (a 75% reduction)**.
-> - Under continuous CDC write churn (`03-write-sweep.sh`), `5%` writes across 200 tenants (`5:200`) saw cache hit ratio jump from **`82.3%` to `95.9%` (`4.3×` fewer misses)** and throughput jump **`+52.4%` (`82 rps` $\rightarrow$ `125 rps`)**.
->
-> **3. Complex Multi-Table & Dynamic Filter Gains**:
-> - On 80/20 Pareto enterprise screens (`complex-dashboard-zipfian.sql`), `0.8.0` flipped **`1,000` tenants from `-49%` (`18 rps`) to `+53%` (`33 rps`)** and flipped **`2,000` tenants from `-77%` (`8 rps`) to `+27%` (`25 rps`, `3.13×` faster)**!
-> - On the `ADMISSION_THRESHOLD` sweep (`07`), `t2_settle` jumped **`3.15×` (`117 rps` $\rightarrow$ `369 rps`, `100%` hit)**, `t2_dyn` jumped **`2.46×` (`13 rps` $\rightarrow$ `32 rps`, hitting `+8.8%` over Origin in Trial 3)**, and `t4_dyn` achieved a **`+8%` net speedup over the prewarmed Origin (`35 rps` vs. `33 rps`)**!
-
----
-
-## 6. Índice de Artefatos desta Pasta (`results/0.8.0/`)
+## 5. Índice de Artefatos desta Pasta (`results/0.8.0/`)
 
 - [`verify-correctness-doks.txt`](verify-correctness-doks.txt): Gate diferencial byte a byte (`8/8` baseline, `12/12` complexas estáticas, `12/12` pós-CDC ao vivo, `0` uncacheable, `3` invalidações seletivas).
 - [`01-tenant-sweep-k8s.txt`](01-tenant-sweep-k8s.txt): Varredura de `1` a `2.000` tenants (`TRIALS=3`).
