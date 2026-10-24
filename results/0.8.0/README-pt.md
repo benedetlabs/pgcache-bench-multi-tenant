@@ -188,6 +188,28 @@ Em `cplx_dyn_200t` ([`workload/complex-dashboard-dynamic.sql`](../../workload/co
 | **`1.000` Tenants** | 381,24 ms · 21 rps | 463,82 ms · 18 rps (`-49%`) | **265,90 ms · 33 rps** (`6,0` warm) | 71,0% → **79,1%** | **+53% (1,53×)** | **1,83× mais rápido (virou de `-49%` para `+53%`)** |
 | **`2.000` Tenants** | 408,88 ms · 20 rps | 996,55 ms · 8 rps (`-77%`) | **338,95 ms · 25 rps** (`6,3` warm) | 49,9% → **71,5%** | **+27% (1,27×)** | **3,13× mais rápido (virou de `-77%` para `+27%`)** |
 
+#### 4.4.2-B Varredura 11: 5 Execuções Consecutivas sem Reset entre Execuções (`100` a `2.000` Tenants — [`11-complex-zipfian-progressive-k8s.txt`](11-complex-zipfian-progressive-k8s.txt))
+
+Na bateria `04-complex-zipfian-k8s.txt` acima, cada trial recriava o pod do PgCache (`reset_pgcache`) e limitava o aquecimento a `8 × 15s = 120s`, interrompendo a população de Materialized Views antes que os tenants da cauda longa (a partir de `500` tenants) terminassem de aquecer.
+
+Para medir a evolução real do cache ao longo do tempo e sua capacidade aquecida, o script **[`scripts/11-complex-zipfian-progressive.sh`](../../scripts/11-complex-zipfian-progressive.sh)** reseta o PgCache **apenas uma vez** no início de cada ponto (`T`) e mede **5 execuções consecutivas de `60s` (`Exec 1/5` a `Exec 5/5` = `300s` contínuos) sem pre-warm separado e sem resetar o PgCache entre elas**, além do modo **`prewarmed`** (onde todos os tenants `1..T` recebem um passe sequencial inicial antes das 5 execuções):
+
+| Tenants (`z_tenants`) | Origin (`A_rps`) | `Exec 1/5` (`0–60s` Frio) | `Exec 2/5` (`60–120s`) | `Exec 3/5` (`120–180s`) | `Exec 4/5` (`180–240s`) | **`Exec 5/5` (`240–300s` Aquecido)** | **`Exec 5/5` (Com Pre-Warm)** | Queries Registradas (`Exec 5`) | Memória Usada (`Exec 5`) |
+|---:|---:|---|---|---|---|---|---|---:|---:|
+| **`100`** | 35–41 rps | 17 rps (`79,1%`) | 8 rps (`99,6%`) | 118 rps (`99,9%`) | **820 rps (`20,0×`)** | **756 rps (`18,4×`, `100%` hit)** | **794 rps (`22,7×`, `100%` hit)** | **`800 / 800` (100%)** | `652–668 MiB` |
+| **`200`** | 36–38 rps | 31 rps (`77,4%`) | 277 rps (`99,1%`) | 734 rps (`100%`) | **746 rps (`20,7×`)** | **698 rps (`19,4×`, `100%` hit)** | **777 rps (`20,4×`, `100%` hit)** | **`1.600 / 1.600` (100%)** | `908–911 MiB` |
+| **`500`** | 38–39 rps | 28 rps (`63,7%`) | 56 rps (`83,1%`) | 79 rps (`92,7%`) | 171 rps (`98,3%`) | **604 rps (`15,9×`, `99,99%` hit)** | **678 rps (`17,4×`, `100%` hit)** | **`4.000 / 4.000` (100%)** | `1.349–1.400 MiB` |
+| **`1.000`** | 37–38 rps | 26 rps (`56,4%`) | 42 rps (`72,8%`) | 51 rps (`81,8%`) | 56 rps (`86,3%`) | **64 rps (`1,7×`, `90,6%` hit)** | **65 rps (`1,7×`, `92,9%` hit)** | `6.136–7.053 / 8.000` (88%) | `1.591–1.801 MiB` |
+| **`2.000`** | 36–38 rps | 26 rps (`51,2%`) | 42 rps (`67,8%`) | 47 rps (`73,3%`) | 50 rps (`78,0%`) | **50 rps (`1,4×`, `81,4%` hit)** | **42 rps (`1,1×`, `84,7%` hit)** | `6.196–9.149 / 16.000` (57%) | `1.666–2.240 MiB` |
+
+**O que as 5 execuções consecutivas provam:**
+1. **Em `500` tenants, a queda para `56 rps` era 100% falta de aquecimento da cauda longa**:
+   - Na `Exec 2/5` (`120s`, mesmo tempo do teste anterior), `500` tenants está exatamente em **`56 rps`** (`2.562 / 4.000` MVs registradas, `83,1%` hit).
+   - Mantendo o cache vivo até a `Exec 5/5` (`300s`), ele atinge **`4.000 / 4.000` Materialized Views registradas (`99,99%–100%` hit)** e a vazão dispara mais de **10×**, subindo de `56 rps` para **`604 rps` (`15,9×`)** no modo progressivo e **`678 rps` (`17,4×`)** no modo pre-warmed!
+2. **Taxa física constante de construção de Materialized Views (`~1.210 MVs/minuto` ou `~20,2 MVs/s`)**:
+   - A coluna `Queries_Reg` revela que o worker de população do PgCache constrói Materialized Views complexas (4 a 6 tabelas) a uma taxa constante de **`~1.210 MVs por minuto`** em um nó de 4 vCPUs (`Exec 1`: `~1.350` MVs $\rightarrow$ `Exec 2`: `~2.560` $\rightarrow$ `Exec 3`: `~3.780` $\rightarrow$ `Exec 4`: `~5.000` $\rightarrow$ `Exec 5`: `~6.180`).
+   - Por isso, `500` tenants (`4.000` MVs) completa 100% da população na 4ª/5ª execução (`~3,3 minutos`), `1.000` tenants (`8.000` MVs) já dobra a vazão para **`64–65 rps` (`90,6%–92,9%` hit)** na 5ª execução (precisando de `~6,6 minutos` para atingir `8.000/8.000`), e `2.000` tenants (`16.000` MVs) dobra para **`50 rps` (`81,4%–84,7%` hit)** usando apenas `2,24 GiB` dos `3,5 GiB` de RAM (`0` evictions).
+
 #### 4.4.3 Escritas Concorrentes na Tela Corporativa (`MAX_WARM_PASSES=3` com Reset Frio — [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt))
 
 | `% Escrita : Tenants Alvo` | Origin Caminho A (`0.8.0`) | PgCache `0.7.1` (Parte 1) | PgCache `0.8.0` (3-Trial) | Hit Ratio (`0.7.1` → `0.8.0`) | Ganho `0.8.0` vs Origin | Evolução `0.8.0` vs `0.7.1` |
@@ -242,3 +264,4 @@ Em `cplx_dyn_200t` ([`workload/complex-dashboard-dynamic.sql`](../../workload/co
 - [`06-fair-benchmark-k8s.txt`](06-fair-benchmark-k8s.txt): O "Teste Justo" contra Origin `2 GiB` Prewarmed + `GIN pg_trgm` (`TRIALS=3`).
 - [`07-admission-threshold-k8s.txt`](07-admission-threshold-k8s.txt): Varredura `ADMISSION_THRESHOLD` (`1`, `2`, `4`) em `0s`, `30s`, `settled` e `cplx_dyn` (`TRIALS=3`).
 - [`10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt`](10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt): Curva comparativa de 120s (`8 × 15s`) de `pgcache_cache_subsumptions` entre `0.8.0` e `0.7.1`.
+- [`11-complex-zipfian-progressive-k8s.txt`](11-complex-zipfian-progressive-k8s.txt): Varredura de 5 execuções consecutivas (`60s` cada, sem resetar o PgCache entre execuções) de `100` a `2.000` tenants em `complex-dashboard-zipfian.sql` (modos `progressive` e `prewarmed`).

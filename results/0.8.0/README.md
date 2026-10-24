@@ -185,6 +185,28 @@ In `cplx_dyn_200t` ([`workload/complex-dashboard-dynamic.sql`](../../workload/co
 | **`1,000` Tenants** | 381.24 ms · 21 rps | 463.82 ms · 18 rps (`-49%`) | **265.90 ms · 33 rps** (`6.0` warm) | 71.0% → **79.1%** | **+53% (1.53×)** | **1.83× faster (flipped `-49%` to `+53%`)** |
 | **`2,000` Tenants** | 408.88 ms · 20 rps | 996.55 ms · 8 rps (`-77%`) | **338.95 ms · 25 rps** (`6.3` warm) | 49.9% → **71.5%** | **+27% (1.27×)** | **3.13× faster (flipped `-77%` to `+27%`)** |
 
+#### 4.4.2-B Sweep 11: 5 Consecutive Executions Without Reset Between Executions (`100` to `2,000` Tenants — [`11-complex-zipfian-progressive-k8s.txt`](11-complex-zipfian-progressive-k8s.txt))
+
+In `04-complex-zipfian-k8s.txt` above, each trial recreated the PgCache pod (`reset_pgcache`) and capped warm-up at `8 × 15s = 120s`, cutting off Materialized View population before long-tail tenants (at `500+` tenants) finished warming.
+
+To measure progressive warm-up across consecutive runs and steady-state capacity once warm, **[`scripts/11-complex-zipfian-progressive.sh`](../../scripts/11-complex-zipfian-progressive.sh)** resets PgCache **only once** at the start of each tenant count (`T`) and runs **5 consecutive `60s` executions (`Exec 1/5` to `Exec 5/5` = `300s` continuous) with zero separate pre-warm and no pod reset between executions**, plus a **`prewarmed`** mode (where all tenants `1..T` receive a sequential pass prior to the 5 executions):
+
+| Tenants (`z_tenants`) | Origin (`A_rps`) | `Exec 1/5` (`0–60s` Cold) | `Exec 2/5` (`60–120s`) | `Exec 3/5` (`120–180s`) | `Exec 4/5` (`180–240s`) | **`Exec 5/5` (`240–300s` Warm)** | **`Exec 5/5` (Pre-Warmed)** | Registered Queries (`Exec 5`) | Memory Used (`Exec 5`) |
+|---:|---:|---|---|---|---|---|---|---:|---:|
+| **`100`** | 35–41 rps | 17 rps (`79.1%`) | 8 rps (`99.6%`) | 118 rps (`99.9%`) | **820 rps (`20.0×`)** | **756 rps (`18.4×`, `100%` hit)** | **794 rps (`22.7×`, `100%` hit)** | **`800 / 800` (100%)** | `652–668 MiB` |
+| **`200`** | 36–38 rps | 31 rps (`77.4%`) | 277 rps (`99.1%`) | 734 rps (`100%`) | **746 rps (`20.7×`)** | **698 rps (`19.4×`, `100%` hit)** | **777 rps (`20.4×`, `100%` hit)** | **`1,600 / 1,600` (100%)** | `908–911 MiB` |
+| **`500`** | 38–39 rps | 28 rps (`63.7%`) | 56 rps (`83.1%`) | 79 rps (`92.7%`) | 171 rps (`98.3%`) | **604 rps (`15.9×`, `99.99%` hit)** | **678 rps (`17.4×`, `100%` hit)** | **`4,000 / 4,000` (100%)** | `1,349–1,400 MiB` |
+| **`1,000`** | 37–38 rps | 26 rps (`56.4%`) | 42 rps (`72.8%`) | 51 rps (`81.8%`) | 56 rps (`86.3%`) | **64 rps (`1.7×`, `90.6%` hit)** | **65 rps (`1.7×`, `92.9%` hit)** | `6,136–7,053 / 8,000` (88%) | `1,591–1,801 MiB` |
+| **`2,000`** | 36–38 rps | 26 rps (`51.2%`) | 42 rps (`67.8%`) | 47 rps (`73.3%`) | 50 rps (`78.0%`) | **50 rps (`1.4×`, `81.4%` hit)** | **42 rps (`1.1×`, `84.7%` hit)** | `6,196–9,149 / 16,000` (57%) | `1,666–2,240 MiB` |
+
+**What the 5 consecutive executions prove:**
+1. **At `500` tenants, the drop to `56 rps` was 100% due to incomplete long-tail warm-up**:
+   - In `Exec 2/5` (`120s`, matching the prior test's 120s warm-up cap), `500` tenants sits at **`56 rps`** (`2,562 / 4,000` MVs registered, `83.1%` hit).
+   - Keeping the cache alive through `Exec 5/5` (`300s`), it reaches **`4,000 / 4,000` registered Materialized Views (`99.99%–100%` hit)** and throughput jumps over **10×**, from `56 rps` to **`604 rps` (`15.9×`)** in progressive mode and **`678 rps` (`17.4×`)** in pre-warmed mode!
+2. **Constant physical Materialized View population rate (`~1,210 MVs/minute` or `~20.2 MVs/sec`)**:
+   - The `Queries_Reg` column reveals that PgCache's population worker builds complex 4-to-6 table Materialized Views at a steady rate of **`~1,210 MVs per minute`** on a 4-vCPU node (`Exec 1`: `~1,350` MVs $\rightarrow$ `Exec 2`: `~2,560` $\rightarrow$ `Exec 3`: `~3,780` $\rightarrow$ `Exec 4`: `~5,000` $\rightarrow$ `Exec 5`: `~6,180`).
+   - Consequently, `500` tenants (`4,000` MVs) reaches 100% population in Execution 4–5 (`~3.3 minutes`), `1,000` tenants (`8,000` MVs) nearly doubles to **`64–65 rps` (`90.6%–92.9%` hit)** by Execution 5 (needing `~6.6 minutes` for `8,000/8,000`), and `2,000` tenants (`16,000` MVs) doubles to **`50 rps` (`81.4%–84.7%` hit)** while consuming only `2.24 GiB` of the `3.5 GiB` RAM budget (`0` evictions).
+
 #### 4.4.3 Concurrent Writes on the Enterprise Screen (`MAX_WARM_PASSES=3` with Cold Reset — [`04-complex-writes-k8s.txt`](04-complex-writes-k8s.txt))
 
 | `Write % : Target Tenants` | Origin Path A (`0.8.0`) | PgCache `0.7.1` (Part 1) | PgCache `0.8.0` (3-Trial) | Hit Ratio (`0.7.1` → `0.8.0`) | `0.8.0` Gain vs Origin | `0.8.0` vs `0.7.1` |
@@ -239,3 +261,4 @@ In `cplx_dyn_200t` ([`workload/complex-dashboard-dynamic.sql`](../../workload/co
 - [`06-fair-benchmark-k8s.txt`](06-fair-benchmark-k8s.txt): The "Fair Benchmark" against `2 GiB` Prewarmed Origin + `GIN pg_trgm` (`TRIALS=3`).
 - [`07-admission-threshold-k8s.txt`](07-admission-threshold-k8s.txt): `ADMISSION_THRESHOLD` (`1`, `2`, `4`) sweep across `0s`, `30s`, `settled`, and `cplx_dyn` (`TRIALS=3`).
 - [`10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt`](10-subsumption-warmup-0.8.0-vs-0.7.1-k8s.txt): 120-second (`8 × 15s`) step-by-step `pgcache_cache_subsumptions` warm-up curve comparing `0.8.0` vs. `0.7.1`.
+- [`11-complex-zipfian-progressive-k8s.txt`](11-complex-zipfian-progressive-k8s.txt): 5 consecutive `60s` executions (without resetting PgCache between executions) from `100` to `2,000` tenants on `complex-dashboard-zipfian.sql` (`progressive` and `prewarmed` modes).

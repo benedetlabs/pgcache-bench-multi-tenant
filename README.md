@@ -1165,6 +1165,7 @@ With the release of **PgCache `0.8.0`** (`2026-04-22`), we re-ran the full offic
    - On **`outer_join_plus_base_200t`** (`LEFT JOIN` + single-table queries over the preserved relation), total subsumptions rise from `783` to **`887` (`+104` additional subsumptions)**, with `0.8.0` accumulating subsumptions **`2.42×` faster** at 30s (`29` vs. `12`).
 3. **Flipping `1,000` and `2,000` Pareto 80/20 Tenants and Dynamic Filters (`t4_dyn`) into Wins**:
    - On 80/20 Pareto scaling (`04-complex-zipfian-k8s.txt`), `0.8.0` flipped `1,000` tenants from `-49%` (`18 rps`) to **`+53%` (`33 rps`)** and flipped `2,000` tenants from `-77%` (`8 rps`) to **`+27%` (`25 rps`, `3.13×` faster)**!
+   - When we run **5 consecutive `60s` executions without resetting PgCache between executions** ([`scripts/11-complex-zipfian-progressive.sh`](scripts/11-complex-zipfian-progressive.sh) / [`results/0.8.0/11-complex-zipfian-progressive-k8s.txt`](results/0.8.0/11-complex-zipfian-progressive-k8s.txt)), PgCache's population worker builds complex Materialized Views at a constant **`~1,210 MVs/minute` (`~20.2 MVs/sec`)**: at **`500` tenants (`4,000` MVs)**, throughput climbs from `28 rps` (Exec 1) $\rightarrow$ `56 rps` (Exec 2, matching the 120s-capped run) $\rightarrow$ **`604 rps` (`15.9×`, `99.99%` hit)** in Execution 5 (**`678 rps` / `17.4×`** when pre-warmed); at **`1,000` tenants**, Execution 5 reaches **`64–65 rps` (`90.6%–92.9%` hit)**; and at **`2,000` tenants**, Execution 5 reaches **`50 rps` (`81.4%–84.7%` hit)** using `2.24 GiB` of the `3.5 GiB` budget (`0` evictions).
    - On `07-admission-threshold-sweep.sh`, `t2_settle` jumped **`3.15×` (`117 → 369 rps`, `100%` hit)** and `t4_dyn` beat the prewarmed Origin by **`+8%` (`35 rps` vs. `33 rps`, `231.46 ms`)**!
 
 ---
@@ -1236,6 +1237,7 @@ pgcache-multi-tenant/
 │   ├── 08-nvme-mv-benchmark.sh      Case 1: Regular SSD vs Local NVMe MV study (SCALE=1)
 │   ├── 09-nvme-5gb-stress.sh        Case 2: 5 GB Real Disk-Pressure study (SCALE=10, PgCache SSD vs NVMe)
 │   ├── 10-subsumption-curve.sh      120s pgcache_cache_subsumptions warm-up curve (0.8.0 vs 0.7.1)
+│   ├── 11-complex-zipfian-progressive.sh 5 consecutive 60s executions on complex-dashboard-zipfian.sql (no reset)
 │   ├── deploy-monitoring.sh         deploys Grafana Cloud telemetry stack to Kubernetes
 │   ├── verify-correctness.sh        differential correctness, cacheability & MV gate
 │   ├── aks-cluster.sh               turnkey Azure AKS Spot Terraform helper
